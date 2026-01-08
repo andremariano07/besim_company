@@ -19,7 +19,7 @@ import zipfile
 import shutil
 
 # ====== VERSÃO DO APLICATIVO ======
-APP_VERSION = "1.0"
+APP_VERSION = "1.2"
 
 # ================= BANCO =================
 DB_PATH = "besim_company.db"
