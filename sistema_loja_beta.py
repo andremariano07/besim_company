@@ -243,9 +243,28 @@ def check_and_update(app_version, base_path):
     except Exception:
         return False
     if versao_remota != app_version:
-        temp, zip_path = _baixar_repo_zip()
-        codigo = _extrair_repo(zip_path, temp)
-        _copiar_arquivos(codigo, base_path)
+        # ALERTA VISUAL DE ATUALIZAÇÃO
+        try:
+            root_alert = tk.Tk()
+            root_alert.withdraw()
+            messagebox.showinfo(
+                "Atualização do Sistema",
+                "Uma nova atualização foi encontrada no Git.\n\n"
+                "O sistema será atualizado automaticamente e reiniciado.\n\n"
+                "Por favor, aguarde..."
+            )
+            root_alert.destroy()
+        except Exception:
+            pass
+
+        try:
+            temp, zip_path = _baixar_repo_zip()
+            codigo = _extrair_repo(zip_path, temp)
+            _copiar_arquivos(codigo, base_path)
+        except Exception:
+            logging.error("Falha na atualização automática", exc_info=True)
+            return False
+
         _reiniciar_app()
         return True
     return False
@@ -1548,7 +1567,6 @@ def abrir_login():
 if __name__ == "__main__":
     # Tenta atualizar antes de abrir a interface
     try:
-        # usa a função embutida; se houver auto_update.py no diretório, a import acima também funcionará
         check_and_update(APP_VERSION, base_path=os.path.dirname(__file__))
     except Exception:
         pass
