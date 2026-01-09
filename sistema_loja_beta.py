@@ -3,7 +3,7 @@
 Sistema Loja - versão unificada com auto-update (após login), splash estilizada e barra de progresso real.
 Garantias:
 - Roda sem erro
-- Atualiza apenas uma vez (sem loop)
+- Atualiza apenas uma vez (sem loop) ✅ (compara remote VERSION com VERSION local)
 - Splash bonita com logo (se existir) e SEMPRE em primeiro plano
 - Barra de progresso real
 - Login abre normalmente
@@ -302,14 +302,26 @@ class SplashScreen(tk.Toplevel):
         except Exception:
             pass
 
-# ===================== UPDATE (após login, corrigido) =====================
-def obter_versao_remota():
+# ===================== UPDATE (após login, corrigido: sem loop) =====================
+
+def get_local_version() -> str:
+    """Lê a versão local a partir do arquivo VERSION, se existir; senão usa APP_VERSION."""
+    try:
+        if os.path.exists(VERSION_FILE):
+            with open(VERSION_FILE, 'r', encoding='utf-8') as f:
+                return f.read().strip()
+    except Exception:
+        pass
+    return APP_VERSION
+
+
+def obter_versao_remota() -> str:
     url = f"https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/{VERSION_FILE}"
     with urllib.request.urlopen(url, context=_SSL_CTX, timeout=10) as r:
         return r.read().decode("utf-8").strip()
 
 
-def baixar_e_extrair(splash: SplashScreen):
+def baixar_e_extrair(splash: SplashScreen, remote_version: str):
     zip_url = f"https://github.com/{OWNER}/{REPO}/archive/refs/heads/{BRANCH}.zip"
     temp_dir = tempfile.mkdtemp(prefix="update_")
     zip_path = os.path.join(temp_dir, "repo.zip")
@@ -342,6 +354,12 @@ def baixar_e_extrair(splash: SplashScreen):
         for f in files:
             if f not in IGNORE_FILES:
                 shutil.copy2(os.path.join(root, f), os.path.join(dest, f))
+    # Garante que a versão local fique igual à remota
+    try:
+        with open(VERSION_FILE, 'w', encoding='utf-8') as vf:
+            vf.write(remote_version)
+    except Exception:
+        pass
     splash.set_status("Finalizando...")
     splash.set_progress(100)
 
@@ -350,11 +368,13 @@ def check_and_update_after_login(master: tk.Misc) -> bool:
     """Retorna True se atualizar (e reiniciar), False caso contrário."""
     try:
         remote_version = obter_versao_remota()
-        if remote_version == APP_VERSION:
-            return False
+        local_version = get_local_version()
+        if remote_version == local_version:
+            return False  # Já está na última versão
     except Exception as e:
         logging.error(f"Falha ao checar versão remota: {e}")
         return False
+
     try:
         # Esconde a janela principal ANTES da splash
         try:
@@ -370,7 +390,7 @@ def check_and_update_after_login(master: tk.Misc) -> bool:
         except Exception:
             pass
 
-        baixar_e_extrair(splash)
+        baixar_e_extrair(splash, remote_version)
         splash.set_status("Atualização concluída. Reiniciando...")
 
         # Reforçar visibilidade antes do reinício
@@ -766,7 +786,7 @@ def abrir_sistema_com_logo(username, login_win):
     abas.add(aba_manutencao, text="Manutenção")
     abas.add(aba_devolucao, text="Devolução")
 
-    # ====== ESTOQUE ====== (conteúdo igual ao fix anterior)
+    # ====== ESTOQUE ======
     est_top = ttk.Frame(aba_estoque)
     est_top.pack(fill="both", expand=True)
     tree_frame = ttk.Frame(est_top)
@@ -912,7 +932,7 @@ def abrir_sistema_com_logo(username, login_win):
             custo = float(ent_custo.get().replace("R$", "").replace(",", ".") or 0)
             preco = float(ent_preco.get().replace("R$", "").replace(",", ".") or 0)
             qtd = int(ent_qtd.get() or 0)
-            if not nome or not tipo:
+            if not nome ou not tipo:
                 messagebox.showwarning("Atenção", "Preencha nome e tipo")
                 return
             if not messagebox.askyesno("Salvar Edição", f"Deseja salvar as alterações do produto {codigo}?"):
@@ -1416,7 +1436,7 @@ def abrir_sistema_com_logo(username, login_win):
         try:
             with conn:
                 cursor.execute("INSERT INTO caixa(valor,data) VALUES (?,?)", (valor, hoje))
-                cursor.execute("UPDATE manutencao SET aprovado=1 WHERE os=?", (os_num,))
+                cursor.execute("UPDATE manutencao SET aprovado=1 WHERE os=?", (os_num))
             carregar_manutencao()
             atualizar_caixa()
             messagebox.showinfo("Aprovado", f"OS {os_num} aprovada. R$ {valor:.2f} adicionados ao caixa.")
@@ -1483,7 +1503,7 @@ def abrir_sistema_com_logo(username, login_win):
         nome = ent_nome_dev.get().strip()
         item = ent_devolucao.get().strip()
         motivo = ent_motivo_dev.get().strip()
-        if not nome or not item or not motivo:
+        if not nome ou not item ou not motivo:
             messagebox.showwarning("Atenção", "Preencha nome, item e motivo da devolução")
             return
         data = datetime.datetime.now().strftime("%d/%m/%Y")
