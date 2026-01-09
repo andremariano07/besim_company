@@ -1301,22 +1301,29 @@ def abrir_sistema_com_logo(username, login_win):
     atualizar_caixa()
     ttk.Button(f_cx, text="Fechar Caixa Manualmente", command=fechar_caixa).pack(pady=8)
 
+    
+    
     # ====== MANUTENÇÃO ======
     f_m = ttk.Frame(aba_manutencao, padding=8)
     f_m.pack(fill="x", pady=6)
+
     ttk.Label(f_m, text="CPF").grid(row=0, column=0, sticky="w", padx=6, pady=4)
     ent_cpf_m = ttk.Entry(f_m)
     ent_cpf_m.grid(row=0, column=1, padx=6, pady=4)
     ent_cpf_m.bind("<KeyRelease>", partial(formatar_cpf, entry=ent_cpf_m))
+
     ttk.Label(f_m, text="Nome").grid(row=0, column=2, sticky="w", padx=6, pady=4)
     ent_nome_m = ttk.Entry(f_m, state="readonly")
     ent_nome_m.grid(row=0, column=3, padx=6, pady=4)
+
     ttk.Label(f_m, text="Telefone").grid(row=0, column=4, sticky="w", padx=6, pady=4)
     ent_tel_m = ttk.Entry(f_m, state="readonly")
     ent_tel_m.grid(row=0, column=5, padx=6, pady=4)
+
     ttk.Label(f_m, text="Descrição").grid(row=1, column=0, sticky="w", padx=6, pady=6)
     ent_desc_m = ttk.Entry(f_m, width=70)
     ent_desc_m.grid(row=1, column=1, columnspan=5, pady=4, padx=6, sticky="we")
+
     ttk.Label(f_m, text="Valor").grid(row=1, column=6, sticky="w", padx=6, pady=6)
     ent_valor_m = ttk.Entry(f_m, width=18)
     ent_valor_m.grid(row=1, column=7, padx=6, pady=6)
@@ -1324,7 +1331,12 @@ def abrir_sistema_com_logo(username, login_win):
 
     tree_m_frame = ttk.Frame(aba_manutencao)
     tree_m_frame.pack(fill="both", expand=True, pady=8)
-    tree_m = ttk.Treeview(tree_m_frame, columns=("OS", "Nome", "CPF", "Telefone", "Descrição", "Data", "Valor", "Aprovado"), show="headings")
+
+    tree_m = ttk.Treeview(
+        tree_m_frame,
+        columns=("OS", "Nome", "CPF", "Telefone", "Descrição", "Data", "Valor", "Aprovado"),
+        show="headings"
+    )
     for c in tree_m["columns"]:
         tree_m.heading(c, text=c)
     tree_m.column("OS", width=80, anchor="center")
@@ -1336,15 +1348,22 @@ def abrir_sistema_com_logo(username, login_win):
     tree_m.column("Valor", width=120, anchor="e")
     tree_m.column("Aprovado", width=100, anchor="center")
     tree_m.pack(side="left", fill="both", expand=True)
+
     scrollbar_m = ttk.Scrollbar(tree_m_frame, orient="vertical", command=tree_m.yview)
     tree_m.configure(yscroll=scrollbar_m.set)
     scrollbar_m.pack(side="right", fill="y")
 
     def carregar_manutencao():
         tree_m.delete(*tree_m.get_children())
-        for row in cursor.execute("SELECT os, nome, cpf, telefone, descricao, data, COALESCE(valor,0), COALESCE(aprovado,0) FROM manutencao ORDER BY os DESC"):
+        for row in cursor.execute(
+            "SELECT os, nome, cpf, telefone, descricao, data, COALESCE(valor,0), COALESCE(aprovado,0) "
+            "FROM manutencao ORDER BY os DESC"
+        ):
             aprovado_text = "Sim" if row[7] == 1 else "Não"
-            tree_m.insert("", "end", values=(row[0], row[1], row[2], row[3], row[4], row[5], f"R$ {row[6]:.2f}", aprovado_text))
+            tree_m.insert("", "end", values=(
+                row[0], row[1], row[2], row[3], row[4], row[5], f"R$ {row[6]:.2f}", aprovado_text
+            ))
+
     carregar_manutencao()
 
     def buscar_cliente_m(event=None):
@@ -1356,6 +1375,7 @@ def abrir_sistema_com_logo(username, login_win):
             ent_nome_m.delete(0, "end")
             ent_nome_m.insert(0, r[0])
             ent_nome_m.config(state="readonly")
+
             ent_tel_m.config(state="normal")
             ent_tel_m.delete(0, "end")
             ent_tel_m.insert(0, r[1])
@@ -1370,6 +1390,7 @@ def abrir_sistema_com_logo(username, login_win):
         telefone = ent_tel_m.get().strip()
         desc = ent_desc_m.get().strip()
         valor_text = ent_valor_m.get().replace("R$", "").replace(",", ".").strip()
+
         if not cpf or not nome or not desc or not valor_text:
             messagebox.showwarning("Atenção", "Preencha todos os campos, incluindo o valor")
             return
@@ -1378,6 +1399,7 @@ def abrir_sistema_com_logo(username, login_win):
         except ValueError:
             messagebox.showerror("Erro", "Valor inválido")
             return
+
         data = datetime.datetime.now().strftime("%d/%m/%Y")
         with conn:
             cursor.execute(
@@ -1385,46 +1407,62 @@ def abrir_sistema_com_logo(username, login_win):
                 (cpf, nome, telefone, desc, data, valor)
             )
             os_num = cursor.lastrowid
+
         gerar_os_pdf(os_num, nome, cpf, telefone, desc, valor)
         carregar_manutencao()
+
         ent_cpf_m.delete(0, "end")
         ent_nome_m.config(state="normal"); ent_nome_m.delete(0, "end"); ent_nome_m.config(state="readonly")
         ent_tel_m.config(state="normal"); ent_tel_m.delete(0, "end"); ent_tel_m.config(state="readonly")
         ent_desc_m.delete(0, "end")
         ent_valor_m.delete(0, "end")
+
         messagebox.showinfo("OS", "Ordem de serviço registrada!")
 
     btn_reg_manut = ttk.Button(f_m, text="Registrar Manutenção", command=cadastrar_manutencao)
     btn_reg_manut.grid(row=2, column=0, columnspan=2, pady=8)
-    btn_excluir_manut = ttk.Button(f_m, text="Excluir Manutenção", command=lambda: excluir_manutencao())
-    btn_excluir_manut.grid(row=2, column=2, columnspan=2, pady=8)
-    if not is_admin(username):
-        btn_excluir_manut.state(["disabled"]) 
 
     def excluir_manutencao():
         if not is_admin(username):
             messagebox.showerror("Permissão negada", "Somente o administrador pode excluir manutenções.")
             return
-        item = tree_m.selection()
-        if not item:
+
+        selected = tree_m.selection()
+        if not selected:
+            messagebox.showwarning("Atenção", "Selecione uma OS para excluir.")
             return
-        os_num = tree_m.item(item)["values"][0]
+
+        item_id = selected[0]
+        os_num = tree_m.item(item_id)["values"][0]
+
         if messagebox.askyesno("Excluir OS", f"Deseja excluir a OS {os_num}?"):
             with conn:
                 cursor.execute("DELETE FROM manutencao WHERE os=?", (os_num,))
             carregar_manutencao()
 
+    btn_excluir_manut = ttk.Button(f_m, text="Excluir Manutenção", command=excluir_manutencao)
+    btn_excluir_manut.grid(row=2, column=2, columnspan=2, pady=8)
+    if not is_admin(username):
+        btn_excluir_manut.state(["disabled"])
+
     def aprovar_manutencao():
-        item = tree_m.selection()
-        if not item:
+        selected = tree_m.selection()
+        if not selected:
             messagebox.showwarning("Atenção", "Selecione a OS que será aprovada na lista.")
             return
-        os_num = tree_m.item(item)["values"][0]
-        cursor.execute("SELECT COALESCE(valor,0), COALESCE(aprovado,0) FROM manutencao WHERE os=?", (os_num,))
+
+        item_id = selected[0]
+        os_num = tree_m.item(item_id)["values"][0]
+
+        cursor.execute(
+            "SELECT COALESCE(valor,0), COALESCE(aprovado,0) FROM manutencao WHERE os=?",
+            (os_num,)  # sempre tupla
+        )
         r = cursor.fetchone()
         if not r:
             messagebox.showerror("Erro", "OS não encontrada.")
             return
+
         valor, aprovado = r
         if aprovado == 1:
             messagebox.showinfo("Info", f"A OS {os_num} já foi aprovada.")
@@ -1432,18 +1470,22 @@ def abrir_sistema_com_logo(username, login_win):
         if valor <= 0:
             messagebox.showwarning("Atenção", "Valor inválido para aprovar.")
             return
+
         hoje = datetime.datetime.now().strftime("%d/%m/%Y")
         try:
             with conn:
                 cursor.execute("INSERT INTO caixa(valor,data) VALUES (?,?)", (valor, hoje))
-                cursor.execute("UPDATE manutencao SET aprovado=1 WHERE os=?", (os_num))
+                cursor.execute("UPDATE manutencao SET aprovado=1 WHERE os=?", (os_num,))  # vírgula aqui
             carregar_manutencao()
             atualizar_caixa()
             messagebox.showinfo("Aprovado", f"OS {os_num} aprovada. R$ {valor:.2f} adicionados ao caixa.")
-        except Exception:
-            messagebox.showerror("Erro", "Falha ao aprovar manutenção. Tente novamente.")
+        except Exception as ex:
+            logging.error("Falha ao aprovar manutenção", exc_info=True)
+            messagebox.showerror("Erro", f"Falha ao aprovar manutenção:\n{ex}")
 
-    ttk.Button(f_m, text="Manutenção Aprovada", command=aprovar_manutencao).grid(row=2, column=4, columnspan=2, pady=8)
+    # Cria o botão APÓS definir a função
+    btn_aprovar_manut = ttk.Button(f_m, text="Manutenção Aprovada", command=aprovar_manutencao)
+    btn_aprovar_manut.grid(row=2, column=4, columnspan=2, pady=8)
 
     # ====== DEVOLUÇÃO ======
     f_d = ttk.Frame(aba_devolucao, padding=8)
