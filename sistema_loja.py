@@ -36,7 +36,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 
 # ===================== CONFIGURAÇÕES =====================
-APP_VERSION = "1.7"
+APP_VERSION = "1.8"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
