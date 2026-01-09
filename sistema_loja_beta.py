@@ -36,7 +36,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 
 # ===================== CONFIGURAÇÕES =====================
-APP_VERSION = "1.5"
+APP_VERSION = "1.6"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -932,7 +932,7 @@ def abrir_sistema_com_logo(username, login_win):
             custo = float(ent_custo.get().replace("R$", "").replace(",", ".") or 0)
             preco = float(ent_preco.get().replace("R$", "").replace(",", ".") or 0)
             qtd = int(ent_qtd.get() or 0)
-            if not nome ou not tipo:
+            if not nome or not tipo:
                 messagebox.showwarning("Atenção", "Preencha nome e tipo")
                 return
             if not messagebox.askyesno("Salvar Edição", f"Deseja salvar as alterações do produto {codigo}?"):
@@ -1503,7 +1503,7 @@ def abrir_sistema_com_logo(username, login_win):
         nome = ent_nome_dev.get().strip()
         item = ent_devolucao.get().strip()
         motivo = ent_motivo_dev.get().strip()
-        if not nome ou not item ou not motivo:
+        if not nome or not item or not motivo:
             messagebox.showwarning("Atenção", "Preencha nome, item e motivo da devolução")
             return
         data = datetime.datetime.now().strftime("%d/%m/%Y")
