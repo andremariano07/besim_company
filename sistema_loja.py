@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 """
 Sistema Loja - versão unificada com auto-update (após login), splash estilizada e barra de progresso real.
@@ -34,19 +35,14 @@ from functools import partial
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
-
 # ===================== BACKUP GOOGLE DRIVE (pasta sincronizada) =====================
 GOOGLE_DRIVE_BACKUP = r"G:\Meu Drive\BkpBesim"
-
-
 def garantir_pastas_backup():
     try:
         for pasta in ("banco", "cupons", "OS", "relatorios"):
             os.makedirs(os.path.join(GOOGLE_DRIVE_BACKUP, pasta), exist_ok=True)
     except Exception as ex:
         logging.error(f"Falha ao criar pastas de backup: {ex}", exc_info=True)
-
-
 def backup_banco():
     try:
         garantir_pastas_backup()
@@ -59,8 +55,6 @@ def backup_banco():
             logging.info(f"Backup do banco -> {destino}")
     except Exception as ex:
         logging.error(f"Falha no backup do DB: {ex}", exc_info=True)
-
-
 def backup_pdf(caminho_pdf: str, tipo: str):
     try:
         garantir_pastas_backup()
@@ -73,8 +67,6 @@ def backup_pdf(caminho_pdf: str, tipo: str):
             )
     except Exception as ex:
         logging.error(f"Falha no backup PDF: {ex}", exc_info=True)
-
-
 def backup_bulk_dir(local_dir: str, tipo: str):
     try:
         garantir_pastas_backup()
@@ -86,13 +78,11 @@ def backup_bulk_dir(local_dir: str, tipo: str):
             logging.info(f"Backup em lote de {local_dir} -> {destino_dir}")
     except Exception as ex:
         logging.error(f"Falha no backup em lote: {ex}", exc_info=True)
-
-
 # ===================== CONFIGURAÇÕES =====================
-DISABLE_AUTO_UPDATE = (
-    True  # <-- Evita que a atualização automática sobrescreva este patch
+DISABLE_AUTO_UPDATE = DISABLE_AUTO_UPDATE = (
+    False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "2.2"
+APP_VERSION = "2.3"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -100,7 +90,6 @@ VERSION_FILE = "VERSION"
 DB_PATH = "besim_company.db"
 IGNORE_FILES = {"besim_company.db"}
 IGNORE_DIRS = {"cupons", "relatorios", "OS", "__pycache__", ".git"}
-
 # ===================== LOG =====================
 LOG_FILE = "sistema_loja_errors.log"
 logging.basicConfig(
@@ -109,11 +98,9 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
-
 # ===================== BANCO =====================
 conn = sqlite3.connect(DB_PATH)
 cursor = conn.cursor()
-
 cursor.execute(
     """
 CREATE TABLE IF NOT EXISTS clientes (
@@ -207,13 +194,9 @@ CREATE TABLE IF NOT EXISTS devolucoes (
 """
 )
 conn.commit()
-
-
 # ====== UTIL: hash de senha / migrações ======
 def hash_password(pw: str) -> str:
     return hashlib.sha256(pw.encode("utf-8")).hexdigest()
-
-
 def ensure_is_admin_column():
     try:
         cursor.execute("PRAGMA table_info(users)")
@@ -223,11 +206,7 @@ def ensure_is_admin_column():
             conn.commit()
     except Exception:
         pass
-
-
 ensure_is_admin_column()
-
-
 def ensure_admin_user():
     try:
         cursor.execute(
@@ -248,11 +227,7 @@ def ensure_admin_user():
                 conn.commit()
     except Exception:
         pass
-
-
 ensure_admin_user()
-
-
 # >>> NOVO: migração segura das colunas hora/motivo da tabela caixa (para bancos existentes)
 def ensure_caixa_columns():
     try:
@@ -269,11 +244,7 @@ def ensure_caixa_columns():
             conn.commit()
     except Exception:
         pass
-
-
 ensure_caixa_columns()
-
-
 def is_admin(username: str) -> bool:
     try:
         cursor.execute("SELECT is_admin FROM users WHERE username=?", (username,))
@@ -281,8 +252,6 @@ def is_admin(username: str) -> bool:
         return bool(r and r[0] == 1)
     except Exception:
         return False
-
-
 # ===================== EXCEPTIONS TK (assinatura corrigida) =====================
 def setup_global_exception_handlers(tk_root: tk.Misc):
     def excepthook(exc_type, exc_value, exc_tb):
@@ -294,9 +263,7 @@ def setup_global_exception_handlers(tk_root: tk.Misc):
             messagebox.showerror("Erro inesperado", msg)
         except Exception:
             pass
-
     sys.excepthook = excepthook
-
     # Assinatura correta para Tkinter: (exc, val, tb)
     def tk_callback_exception(exc, val, tb):
         logging.error("Tkinter callback exception", exc_info=(exc, val, tb))
@@ -305,13 +272,10 @@ def setup_global_exception_handlers(tk_root: tk.Misc):
             messagebox.showerror("Erro na interface", msg)
         except Exception:
             pass
-
     try:
         tk_root.report_callback_exception = tk_callback_exception
     except Exception:
         pass
-
-
 # ===================== FOCO PÓS-PDF =====================
 def bring_app_to_front():
     """Recoloca a janela do app na frente após abrir viewer externo."""
@@ -327,8 +291,6 @@ def bring_app_to_front():
                 pass
     except Exception:
         pass
-
-
 # ===================== SPLASH SCREEN (corrigida: primeiro plano garantido) =====================
 class SplashScreen(tk.Toplevel):
     def __init__(self, master):
@@ -354,10 +316,8 @@ class SplashScreen(tk.Toplevel):
             self.after(30, self.focus_force)
         except Exception:
             pass
-
         frame = tk.Frame(self, bg="#1e1e1e")
         frame.pack(expand=True, fill="both")
-
         logo_path = os.path.join(os.getcwd(), "logo.png")
         if os.path.exists(logo_path):
             try:
@@ -380,7 +340,6 @@ class SplashScreen(tk.Toplevel):
                 bg="#1e1e1e",
                 font=("Segoe UI", 20, "bold"),
             ).pack(pady=(55, 20))
-
         tk.Label(
             frame,
             text="Atualizando sistema...",
@@ -392,7 +351,6 @@ class SplashScreen(tk.Toplevel):
             frame, orient="horizontal", length=360, mode="determinate"
         )
         self.progress.pack(pady=25)
-
         self.status = tk.Label(
             frame,
             text="Preparando atualização",
@@ -401,22 +359,18 @@ class SplashScreen(tk.Toplevel):
             font=("Segoe UI", 10),
         )
         self.status.pack()
-
     def set_progress(self, value):
         self.progress["value"] = value
         try:
             self.update_idletasks()
         except Exception:
             pass
-
     def set_status(self, text):
         self.status.config(text=text)
         try:
             self.update_idletasks()
         except Exception:
             pass
-
-
 # ===================== UPDATE (após login, corrigido: sem loop) =====================
 def get_local_version() -> str:
     """Lê a versão local a partir do arquivo VERSION, se existir; senão usa APP_VERSION."""
@@ -427,19 +381,14 @@ def get_local_version() -> str:
     except Exception:
         pass
     return APP_VERSION
-
-
 def obter_versao_remota() -> str:
     url = f"https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/{VERSION_FILE}"
     with urllib.request.urlopen(url, context=_SSL_CTX, timeout=10) as r:
         return r.read().decode("utf-8").strip()
-
-
 def baixar_e_extrair(splash: SplashScreen, remote_version: str):
     zip_url = f"https://github.com/{OWNER}/{REPO}/archive/refs/heads/{BRANCH}.zip"
     temp_dir = tempfile.mkdtemp(prefix="update_")
     zip_path = os.path.join(temp_dir, "repo.zip")
-
     splash.set_status("Baixando atualização...")
     splash.set_progress(5)
     with urllib.request.urlopen(zip_url, context=_SSL_CTX) as response:
@@ -454,12 +403,10 @@ def baixar_e_extrair(splash: SplashScreen, remote_version: str):
                 downloaded += len(data)
                 if total:
                     splash.set_progress(5 + int((downloaded / total) * 60))
-
     splash.set_status("Extraindo arquivos...")
     splash.set_progress(70)
     with zipfile.ZipFile(zip_path, "r") as z:
         z.extractall(temp_dir)
-
     splash.set_status("Copiando nova versão...")
     splash.set_progress(85)
     src_dir = next(os.scandir(temp_dir)).path
@@ -471,32 +418,26 @@ def baixar_e_extrair(splash: SplashScreen, remote_version: str):
         for f in files:
             if f not in IGNORE_FILES:
                 shutil.copy2(os.path.join(root_dir, f), os.path.join(dest, f))
-
     # Garante que a versão local fique igual à remota
     try:
         with open(VERSION_FILE, "w", encoding="utf-8") as vf:
             vf.write(remote_version)
     except Exception:
         pass
-
     splash.set_status("Finalizando...")
     splash.set_progress(100)
-
-
 def check_and_update_after_login(master: tk.Misc) -> bool:
     """Retorna True se atualizar (e reiniciar), False caso contrário."""
     if DISABLE_AUTO_UPDATE:
         return False
-
     try:
         remote_version = obter_versao_remota()
         local_version = get_local_version()
         if remote_version == local_version:
-            return False  # Já está na última versão
+            return False # Já está na última versão
     except Exception as e:
         logging.error(f"Falha ao checar versão remota: {e}")
         return False
-
     try:
         # Esconde a janela principal ANTES da splash
         try:
@@ -505,16 +446,13 @@ def check_and_update_after_login(master: tk.Misc) -> bool:
             master.update()
         except Exception:
             pass
-
         splash = SplashScreen(master)
         try:
             splash.update()
         except Exception:
             pass
-
         baixar_e_extrair(splash, remote_version)
         splash.set_status("Atualização concluída. Reiniciando...")
-
         # Reforçar visibilidade antes do reinício
         try:
             splash.lift()
@@ -522,7 +460,6 @@ def check_and_update_after_login(master: tk.Misc) -> bool:
             splash.update()
         except Exception:
             pass
-
         master.after(
             1200, lambda: os.execv(sys.executable, [sys.executable] + sys.argv)
         )
@@ -539,8 +476,6 @@ def check_and_update_after_login(master: tk.Misc) -> bool:
         except Exception:
             pass
         return False
-
-
 # ================= FUNÇÕES PDF =================
 def gerar_cupom(cliente, produto, qtd, pagamento, total):
     agora = datetime.datetime.now()
@@ -549,7 +484,6 @@ def gerar_cupom(cliente, produto, qtd, pagamento, total):
     nome_arquivo = os.path.join(
         pasta_cupons, f"cupom_{agora.strftime('%Y%m%d_%H%M%S')}.pdf"
     )
-
     c = canvas.Canvas(nome_arquivo, pagesize=A4)
     logo_path = os.path.join(os.getcwd(), "logo.png")
     if os.path.exists(logo_path):
@@ -565,11 +499,11 @@ def gerar_cupom(cliente, produto, qtd, pagamento, total):
             )
         except Exception:
             pass
-
     t = c.beginText(40, 680)
     t.setFont("Helvetica", 12)
     linhas = [
         "BESIM COMPANY",
+        "----------------------------------------------"
         "----------------------------------------------",
         f"Cliente: {cliente}",
         f"Produto: {produto}",
@@ -578,6 +512,7 @@ def gerar_cupom(cliente, produto, qtd, pagamento, total):
         f"Total: R$ {total:.2f}",
         f"Data: {agora.strftime('%d/%m/%Y')}",
         f"Hora: {agora.strftime('%H:%M:%S')}",
+        "----------------------------------------------"
         "----------------------------------------------",
         "Obrigado pela preferência!",
     ]
@@ -585,12 +520,10 @@ def gerar_cupom(cliente, produto, qtd, pagamento, total):
         t.textLine(l)
     c.drawText(t)
     c.save()
-
     try:
         backup_pdf(nome_arquivo, "cupons")
     except Exception:
         pass
-
     try:
         sistema = platform.system()
         if sistema == "Windows":
@@ -601,16 +534,12 @@ def gerar_cupom(cliente, produto, qtd, pagamento, total):
             os.system(f"xdg-open '{nome_arquivo}'")
     except Exception:
         pass
-
     bring_app_to_front()
-
-
 def gerar_os_pdf(os_num, nome, cpf, telefone, descricao, valor):
     agora = datetime.datetime.now()
     pasta_os = os.path.join(os.getcwd(), "OS")
     os.makedirs(pasta_os, exist_ok=True)
     nome_arquivo = os.path.join(pasta_os, f"OS_{os_num}.pdf")
-
     c = canvas.Canvas(nome_arquivo, pagesize=A4)
     logo_path = os.path.join(os.getcwd(), "logo.png")
     if os.path.exists(logo_path):
@@ -626,11 +555,11 @@ def gerar_os_pdf(os_num, nome, cpf, telefone, descricao, valor):
             )
         except Exception:
             pass
-
     t = c.beginText(40, 680)
     t.setFont("Helvetica", 12)
     linhas = [
         "BESIM COMPANY - ORDEM DE SERVIÇO",
+        "----------------------------------------------"
         "----------------------------------------------",
         f"OS Nº: {os_num}",
         f"Cliente: {nome}",
@@ -639,18 +568,17 @@ def gerar_os_pdf(os_num, nome, cpf, telefone, descricao, valor):
         f"Descrição: {descricao}",
         f"Valor: R$ {valor:.2f}",
         f"Data: {agora.strftime('%d/%m/%Y')}",
+        "----------------------------------------------"
         "----------------------------------------------",
     ]
     for l in linhas:
         t.textLine(l)
     c.drawText(t)
     c.save()
-
     try:
         backup_pdf(nome_arquivo, "OS")
     except Exception:
         pass
-
     try:
         sistema = platform.system()
         if sistema == "Windows":
@@ -662,19 +590,15 @@ def gerar_os_pdf(os_num, nome, cpf, telefone, descricao, valor):
     except Exception:
         pass
     bring_app_to_front()
-
-
 # ================= RELATÓRIO VENDAS (PDF) =================
 def gerar_relatorio_vendas_dia_pdf(data_str: str = None):
     hoje = datetime.datetime.now().strftime("%d/%m/%Y")
     data_alvo = data_str or hoje
-
     pasta_rel = os.path.join(os.getcwd(), "relatorios")
     os.makedirs(pasta_rel, exist_ok=True)
     nome_arquivo = os.path.join(
         pasta_rel, f"relatorio_vendas_{data_alvo.replace('/', '-')}" + ".pdf"
     )
-
     c = canvas.Canvas(nome_arquivo, pagesize=A4)
     logo_path_local = os.path.join(os.getcwd(), "logo.png")
     if os.path.exists(logo_path_local):
@@ -690,13 +614,11 @@ def gerar_relatorio_vendas_dia_pdf(data_str: str = None):
             )
         except Exception:
             pass
-
     c.setFont("Helvetica-Bold", 12)
     c.drawString(40, 760, f"Relatório de Vendas - {data_alvo}")
     c.setFont("Helvetica", 11)
     c.drawString(40, 742, "-" * 110)
     y = 720
-
     # Vendas do dia
     cursor.execute(
         "SELECT hora, cliente, produto, quantidade, pagamento, total FROM vendas WHERE data=? ORDER BY hora DESC",
@@ -705,7 +627,6 @@ def gerar_relatorio_vendas_dia_pdf(data_str: str = None):
     linhas = cursor.fetchall()
     totais_pg = {"PIX": 0.0, "Cartão": 0.0, "Dinheiro": 0.0, "OUTROS": 0.0}
     total_dia = 0.0
-
     c.setFont("Helvetica", 10)
     if not linhas:
         c.drawString(40, y, "Nenhuma venda registrada neste dia.")
@@ -733,7 +654,6 @@ def gerar_relatorio_vendas_dia_pdf(data_str: str = None):
             c.drawString(455, y, str(pagamento))
             c.drawRightString(590, y, f"R$ {float(total):.2f}")
             y -= 16
-
             if y < 60:
                 c.showPage()
                 if os.path.exists(logo_path_local):
@@ -763,7 +683,6 @@ def gerar_relatorio_vendas_dia_pdf(data_str: str = None):
                 c.drawString(520, y, "Total")
                 y -= 16
                 c.setFont("Helvetica", 10)
-
     # Totais por forma de pagamento
     y -= 8
     c.setFont("Helvetica", 11)
@@ -776,18 +695,15 @@ def gerar_relatorio_vendas_dia_pdf(data_str: str = None):
     for k in ["PIX", "Cartão", "Dinheiro", "OUTROS"]:
         c.drawString(40, y, f"{k}: R$ {totais_pg[k]:.2f}")
         y -= 18
-
     y -= 6
     c.setFont("Helvetica-Bold", 12)
     c.drawString(40, y, f"Total de vendas do dia: R$ {total_dia:.2f}")
     y -= 24
-
     # Saídas do dia
     c.setFont("Helvetica-Bold", 12)
     c.drawString(40, y, "Saídas do dia")
     y -= 18
     c.setFont("Helvetica", 11)
-
     # >>> Consulta compatível com colunas hora/motivo criadas na migração
     cursor.execute(
         "SELECT hora, motivo, valor FROM caixa WHERE data=? AND valor<0 ORDER BY hora DESC",
@@ -795,7 +711,6 @@ def gerar_relatorio_vendas_dia_pdf(data_str: str = None):
     )
     saidas = cursor.fetchall()
     total_saidas = 0.0
-
     if not saidas:
         c.drawString(40, y, "Nenhuma saída registrada neste dia.")
         y -= 18
@@ -836,7 +751,6 @@ def gerar_relatorio_vendas_dia_pdf(data_str: str = None):
                 c.drawString(520, y, "Valor")
                 y -= 16
                 c.setFont("Helvetica", 10)
-
             hora_txt = str(hora_s or "--:--:--")
             motivo_txt = str(motivo_s or "(sem motivo)")[:48]
             c.drawString(40, y, hora_txt)
@@ -844,7 +758,6 @@ def gerar_relatorio_vendas_dia_pdf(data_str: str = None):
             c.drawRightString(590, y, f"R$ {abs(float(valor_s)):.2f}")
             total_saidas += abs(float(valor_s))
             y -= 16
-
     # Resumo do caixa
     c.setFont("Helvetica", 11)
     c.drawString(40, y, "-" * 110)
@@ -855,14 +768,11 @@ def gerar_relatorio_vendas_dia_pdf(data_str: str = None):
     c.drawString(40, y, f"Total de saídas: R$ {total_saidas:.2f}")
     y -= 18
     c.drawString(40, y, f"Total líquido do caixa: R$ {total_liquido:.2f}")
-
     c.save()
-
     try:
         backup_pdf(nome_arquivo, "relatorios")
     except Exception:
         pass
-
     try:
         sistema = platform.system()
         if sistema == "Windows":
@@ -875,8 +785,6 @@ def gerar_relatorio_vendas_dia_pdf(data_str: str = None):
         pass
     bring_app_to_front()
     return nome_arquivo
-
-
 # ================= FORMATAÇÃO CPF/TELEFONE/MOEDA =================
 def formatar_cpf(event, entry):
     texto = "".join(filter(str.isdigit, entry.get()))[:11]
@@ -889,8 +797,6 @@ def formatar_cpf(event, entry):
         novo += c
     entry.delete(0, "end")
     entry.insert(0, novo)
-
-
 def formatar_telefone(event, entry):
     texto = "".join(filter(str.isdigit, entry.get()))[:11]
     novo = ""
@@ -904,8 +810,6 @@ def formatar_telefone(event, entry):
         novo += c
     entry.delete(0, "end")
     entry.insert(0, novo)
-
-
 def formatar_moeda(event, entry):
     valor = entry.get().replace("R$", "").replace(",", ".").strip()
     if valor:
@@ -919,8 +823,6 @@ def formatar_moeda(event, entry):
     else:
         entry.delete(0, "end")
         entry.insert(0, "")
-
-
 # ================= SISTEMA PRINCIPAL =================
 def abrir_sistema_com_logo(username, login_win):
     root = tk.Toplevel()
@@ -932,17 +834,14 @@ def abrir_sistema_com_logo(username, login_win):
     root.attributes("-topmost", True)
     root.after(200, lambda: root.attributes("-topmost", False))
     setup_global_exception_handlers(root)
-
     # Executa atualização após login (se houver)
     try:
         updated = check_and_update_after_login(root)
         if updated:
-            return  # app será reiniciado
+            return # app será reiniciado
     except Exception:
         pass
-
     closing_state = {"mode": None}
-
     def on_close():
         if closing_state.get("mode") == "logout":
             try:
@@ -962,7 +861,6 @@ def abrir_sistema_com_logo(username, login_win):
                 pass
             closing_state["mode"] = None
             return
-
         if messagebox.askyesno("Sair", "Tem certeza que deseja encerrar o sistema?"):
             try:
                 if login_win and login_win.winfo_exists():
@@ -979,23 +877,18 @@ def abrir_sistema_com_logo(username, login_win):
                 pass
         else:
             return
-
     root.protocol("WM_DELETE_WINDOW", on_close)
-
     menu_bar = tk.Menu(root)
     menu_sessao = tk.Menu(menu_bar, tearoff=0)
-
     def do_logout():
         if messagebox.askyesno(
             "Logout", "Deseja finalizar a sessão e voltar ao login?"
         ):
             closing_state["mode"] = "logout"
             on_close()
-
     def do_quit():
         closing_state["mode"] = None
         on_close()
-
     menu_sessao.add_command(label="Logout", accelerator="Ctrl+L", command=do_logout)
     menu_sessao.add_separator()
     menu_sessao.add_command(label="Sair", accelerator="Ctrl+Q", command=do_quit)
@@ -1004,14 +897,11 @@ def abrir_sistema_com_logo(username, login_win):
     root.bind_all("<Control-l>", lambda e: do_logout())
     root.bind_all("<Control-q>", lambda e: do_quit())
     root.bind_all("<Control-f>", lambda e: fechar_caixa())
-
-
     style = ttk.Style()
     try:
         style.theme_use("clam")
     except Exception:
         pass
-
     default_font = ("Segoe UI", 10)
     heading_font = ("Segoe UI", 11, "bold")
     style.configure(".", font=default_font)
@@ -1021,11 +911,48 @@ def abrir_sistema_com_logo(username, login_win):
     style.configure("TCombobox", padding=4)
     style.configure("Treeview.Heading", font=heading_font)
     style.configure("Treeview", rowheight=26, font=("Segoe UI", 10))
-    style.map("TButton", foreground=[("active", "#000000")])
+    # ====== MELHORIAS DE LAYOUT ======
+    try:
+        import sv_ttk # Biblioteca para tema moderno
+        sv_ttk.set_theme("light")
+    except ImportError:
+        style.theme_use("clam")
+    # Ajuste adicional no estilo
+    style.configure("Treeview.Heading", font=("Segoe UI", 11, "bold"), background="#0078D7", foreground="white")
+    style.configure("Treeview", rowheight=28)
+    # >>>>>>>>>>>> INÍCIO DO BLOCO NOVO: CONTRASTE DA TREEVIEW <<<<<<<<<<<<
+    # Força texto preto em tema claro + fundo branco
+    style.configure(
+        "Treeview",
+        foreground="black",
+        background="white",
+        fieldbackground="white",
+    )
+    style.map(
+        "Treeview",
+        foreground=[("!disabled", "black"), ("selected", "white")],
+        background=[("selected", "#0078D7")],  # azul Windows para seleção
+    )
+    # >>>>>>>>>>>> FIM DO BLOCO NOVO <<<<<<<<<<<<
+    # Adicionando espaçamento padrão
+    PADX = 8
+    PADY = 6
+    # ====== ESTILOS DE BOTÕES (cores e hover) ======
+    # Paleta inspirada nas cores Tailwind para consistência visual
+    style.configure("Success.TButton", foreground="white", background="#22c55e", padding=6)
+    style.map("Success.TButton", background=[("active", "#16a34a"), ("pressed", "#15803d")])
+    style.configure("Danger.TButton", foreground="white", background="#ef4444", padding=6)
+    style.map("Danger.TButton", background=[("active", "#dc2626"), ("pressed", "#b91c1c")])
+    style.configure("Secondary.TButton", foreground="white", background="#64748b", padding=6)
+    style.map("Secondary.TButton", background=[("active", "#475569"), ("pressed", "#334155")])
+    style.configure("Accent.TButton", foreground="white", background="#2563eb", padding=6)
+    style.map("Accent.TButton", background=[("active", "#1d4ed8"), ("pressed", "#1e40af")])
+    # Botão já usado para fechar caixa
+    style.configure("FecharCaixa.TButton", foreground="white", background="#2563eb", padding=6)
+    style.map("FecharCaixa.TButton", background=[("active", "#1d4ed8"), ("pressed", "#1e40af")])
     style.configure("TNotebook.Tab", padding=[12, 8], font=("Segoe UI", 10, "bold"))
     style.configure("TNotebook", tabposition="n")
     style.configure("Footer.TLabel", foreground="red", font=("Segoe UI", 10, "bold"))
-
     header = ttk.Frame(root)
     header.pack(fill="x", padx=12, pady=(8, 0))
     logo_path = os.path.join(os.getcwd(), "logo.png")
@@ -1044,7 +971,6 @@ def abrir_sistema_com_logo(username, login_win):
         ttk.Label(header, text="BESIM COMPANY", font=("Segoe UI", 14, "bold")).pack(
             side="left"
         )
-
     abas = ttk.Notebook(root)
     abas.pack(fill="both", expand=True, padx=12, pady=(8, 12))
     aba_estoque = ttk.Frame(abas, padding=10)
@@ -1059,42 +985,32 @@ def abrir_sistema_com_logo(username, login_win):
     abas.add(aba_caixa, text="Caixa")
     abas.add(aba_manutencao, text="Manutenção")
     abas.add(aba_devolucao, text="Devolução")
-
     # ====== UPGRADE ======
-
     aba_upgrade = ttk.Frame(abas, padding=10)
     abas.add(aba_upgrade, text="Upgrade")
-
     f_u = ttk.Frame(aba_upgrade, padding=8)
     f_u.pack(fill="x", pady=6)
-
     ttk.Label(f_u, text="CPF").grid(row=0, column=0, sticky="w", padx=6, pady=4)
     ent_cpf_u = ttk.Entry(f_u)
     ent_cpf_u.grid(row=0, column=1, padx=6, pady=4)
     ent_cpf_u.bind("<KeyRelease>", lambda e: formatar_cpf(e, ent_cpf_u))
-
     ttk.Label(f_u, text="Nome").grid(row=0, column=2, sticky="w", padx=6, pady=4)
     ent_nome_u = ttk.Entry(f_u)
     ent_nome_u.grid(row=0, column=3, padx=6, pady=4)
-
     ttk.Label(f_u, text="Telefone").grid(row=0, column=4, sticky="w", padx=6, pady=4)
     ent_tel_u = ttk.Entry(f_u)
     ent_tel_u.grid(row=0, column=5, padx=6, pady=4)
     ent_tel_u.bind("<KeyRelease>", lambda e: formatar_telefone(e, ent_tel_u))
-
     ttk.Label(f_u, text="Descrição").grid(row=1, column=0, sticky="w", padx=6, pady=6)
     ent_desc_u = ttk.Entry(f_u, width=70)
     ent_desc_u.grid(row=1, column=1, columnspan=4, pady=4, padx=6, sticky="we")
-
     ttk.Label(f_u, text="Valor").grid(row=1, column=5, sticky="w", padx=6, pady=6)
     ent_valor_u = ttk.Entry(f_u, width=18)
     ent_valor_u.grid(row=1, column=6, padx=6, pady=6)
     ent_valor_u.bind("<FocusOut>", lambda e: formatar_moeda(e, ent_valor_u))
-    
     ttk.Label(f_u, text="Pagamento").grid(row=2, column=5, sticky="w", padx=6, pady=6)
     ent_pg_u = ttk.Combobox(f_u, values=["PIX", "Cartão", "Dinheiro"], width=16)
     ent_pg_u.grid(row=2, column=6, padx=6, pady=6)
-
     def buscar_cliente_u():
         cpf = ent_cpf_u.get().strip()
         cursor.execute("SELECT nome, telefone FROM clientes WHERE cpf=?", (cpf,))
@@ -1104,9 +1020,7 @@ def abrir_sistema_com_logo(username, login_win):
             ent_nome_u.insert(0, r[0])
             ent_tel_u.delete(0, "end")
             ent_tel_u.insert(0, r[1])
-
-    ttk.Button(f_u, text="Buscar Cliente", command=buscar_cliente_u).grid(row=0, column=6, padx=6)
-
+    ttk.Button(f_u, text="🔍 Buscar Cliente", style="Secondary.TButton", command=buscar_cliente_u).grid(row=0, column=6, padx=6)
     def finalizar_upgrade():
         try:
             cpf = ent_cpf_u.get().strip()
@@ -1137,16 +1051,14 @@ def abrir_sistema_com_logo(username, login_win):
             ent_valor_u.delete(0, "end")
         except Exception as ex:
             messagebox.showerror("Erro", f"Falha ao registrar upgrade\n{ex}")
-    ttk.Button(f_u, text="Finalizar Upgrade", command=finalizar_upgrade).grid(row=2, column=0, columnspan=2, pady=10, sticky="w", padx=6)
-
+    ttk.Button(f_u, text="✓ Finalizar Upgrade", style="Success.TButton", command=finalizar_upgrade).grid(row=2, column=0, columnspan=2, pady=10, sticky="w", padx=6)
     # Histórico de Upgrades
     hist_u_frame = ttk.Frame(aba_upgrade, padding=(8, 0))
     hist_u_frame.pack(fill="both", expand=True)
     top_hist_u = ttk.Frame(hist_u_frame)
     top_hist_u.pack(fill="x", pady=(6, 6))
     ttk.Label(top_hist_u, text="Histórico de Upgrades", font=("Segoe UI", 11, "bold")).pack(side="left", padx=6)
-    ttk.Button(top_hist_u, text="Atualizar", command=lambda: carregar_upgrades()).pack(side="left", padx=6)
-
+    ttk.Button(top_hist_u, text="⟳ Atualizar", style="Secondary.TButton", command=lambda: carregar_upgrades()).pack(side="left", padx=6)
     tree_up_frame = ttk.Frame(hist_u_frame)
     tree_up_frame.pack(fill="both", expand=True)
     tree_upgrades = ttk.Treeview(tree_up_frame, columns=("Hora", "Cliente", "Descrição", "Pagamento", "Valor"), show="headings", height=10)
@@ -1157,18 +1069,13 @@ def abrir_sistema_com_logo(username, login_win):
     scrollbar_upgrades = ttk.Scrollbar(tree_up_frame, orient="vertical", command=tree_upgrades.yview)
     tree_upgrades.configure(yscroll=scrollbar_upgrades.set)
     scrollbar_upgrades.pack(side="right", fill="y")
-
-
-
     # ====== FUNÇÃO PARA GERAR RELATÓRIO DE UPGRADES EM PDF ======
-
     def gerar_relatorio_upgrades_dia_pdf(data_str: str = None):
         hoje = datetime.datetime.now().strftime("%d/%m/%Y")
         data_alvo = data_str or hoje
         pasta_rel = os.path.join(os.getcwd(), "relatorios")
         os.makedirs(pasta_rel, exist_ok=True)
         nome_arquivo = os.path.join(pasta_rel, f"relatorio_upgrades_{data_alvo.replace('/', '-')}.pdf")
-
         c = canvas.Canvas(nome_arquivo, pagesize=A4)
         logo_path_local = os.path.join(os.getcwd(), "logo.png")
         if os.path.exists(logo_path_local):
@@ -1176,17 +1083,14 @@ def abrir_sistema_com_logo(username, login_win):
                 c.drawImage(ImageReader(logo_path_local), 40, 780, width=140, height=40, preserveAspectRatio=True, mask="auto")
             except Exception:
                 pass
-
         c.setFont("Helvetica-Bold", 12)
         c.drawString(40, 760, f"Relatório de Upgrades - {data_alvo}")
         c.setFont("Helvetica", 11)
         c.drawString(40, 742, "-" * 110)
         y = 720
-
         cursor.execute("SELECT hora, cliente, produto, pagamento, total FROM vendas WHERE data=? AND pagamento LIKE 'Upgrade%' ORDER BY hora DESC", (hoje,))
         linhas = cursor.fetchall()
         total_dia = 0.0
-
         if not linhas:
             c.drawString(40, y, "Nenhum upgrade registrado neste dia.")
             y -= 18
@@ -1221,17 +1125,14 @@ def abrir_sistema_com_logo(username, login_win):
                     c.drawString(520, y, "Valor")
                     y -= 16
                     c.setFont("Helvetica", 10)
-
         y -= 24
         c.setFont("Helvetica-Bold", 12)
         c.drawString(40, y, f"Total de upgrades do dia: R$ {total_dia:.2f}")
         c.save()
-
         try:
             backup_pdf(nome_arquivo, "relatorios")
         except Exception:
             pass
-
         try:
             sistema = platform.system()
             if sistema == "Windows":
@@ -1244,17 +1145,14 @@ def abrir_sistema_com_logo(username, login_win):
             pass
         bring_app_to_front()
         return nome_arquivo
-
     # Adiciona botão na aba Upgrade
-    ttk.Button(top_hist_u, text="Exportar PDF", command=lambda: gerar_relatorio_upgrades_dia_pdf()).pack(side="left", padx=6)
-
+    ttk.Button(top_hist_u, text="📄 Exportar PDF", style="Accent.TButton", command=lambda: gerar_relatorio_upgrades_dia_pdf()).pack(side="left", padx=6)
     def carregar_upgrades():
         tree_upgrades.delete(*tree_upgrades.get_children())
         hoje = datetime.datetime.now().strftime("%d/%m/%Y")
         cursor.execute("SELECT hora, cliente, produto, pagamento, total FROM vendas WHERE data=? AND pagamento LIKE 'Upgrade%' ORDER BY hora DESC", (hoje,))
         for hora, cliente, produto, pagamento, total in cursor.fetchall():
             tree_upgrades.insert("", "end", values=(hora, cliente, produto, (pagamento or "").replace("Upgrade - ", ""), f"R$ {total:.2f}"))
-
     # ====== ESTOQUE ======
     est_top = ttk.Frame(aba_estoque)
     est_top.pack(fill="both", expand=True)
@@ -1280,10 +1178,8 @@ def abrir_sistema_com_logo(username, login_win):
     scrollbar_est = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
     tree.configure(yscroll=scrollbar_est.set)
     scrollbar_est.pack(side="right", fill="y")
-
     f_est = ttk.Frame(aba_estoque, padding=(6, 8))
     f_est.pack(fill="x", pady=6)
-
     def make_labeled_entry(parent, label_text, width=15):
         frm = ttk.Frame(parent)
         lbl = ttk.Label(frm, text=label_text)
@@ -1291,7 +1187,6 @@ def abrir_sistema_com_logo(username, login_win):
         lbl.pack(side="top", anchor="w")
         ent.pack(side="top", fill="x")
         return frm, ent
-
     frm_codigo, ent_codigo = make_labeled_entry(f_est, "Código", 15)
     frm_codigo.pack(side="left", padx=6)
     frm_nome, ent_nome = make_labeled_entry(f_est, "Nome", 25)
@@ -1309,12 +1204,12 @@ def abrir_sistema_com_logo(username, login_win):
     frm_qtd.pack(side="left", padx=6)
     ent_custo.bind("<FocusOut>", lambda e: formatar_moeda(e, ent_custo))
     ent_preco.bind("<FocusOut>", lambda e: formatar_moeda(e, ent_preco))
-
     def listar_estoque():
         tree.delete(*tree.get_children())
-        tree.tag_configure("baixo", background="tomato")
-        tree.tag_configure("laranja", background="orange")
-        tree.tag_configure("verde", background="lightgreen")
+        # >>> Ajuste de contraste nas tags
+        tree.tag_configure("baixo",   background="tomato",     foreground="black")
+        tree.tag_configure("laranja", background="orange",     foreground="black")
+        tree.tag_configure("verde",   background="lightgreen", foreground="black")
         for p in cursor.execute("SELECT codigo,nome,tipo,preco,estoque FROM produtos"):
             qtd = p[4]
             if qtd <= 5:
@@ -1324,14 +1219,13 @@ def abrir_sistema_com_logo(username, login_win):
             else:
                 tag = "verde"
             tree.insert(
-                "", "end", values=(p[0], p[1], p[2], f"R$ {p[3]:.2f}", qtd), tags=(tag,)
+                "",
+                "end",
+                values=(p[0], p[1], p[2], f"R$ {p[3]:.2f}", qtd), tags=(tag,)
             )
-
     listar_estoque()
-
     btn_frame_est = ttk.Frame(aba_estoque)
     btn_frame_est.pack(fill="x", pady=(6, 0))
-
     def cadastrar_produto():
         try:
             codigo = ent_codigo.get().strip()
@@ -1354,7 +1248,6 @@ def abrir_sistema_com_logo(username, login_win):
             messagebox.showerror("Erro", "Código já existe!")
         except ValueError:
             messagebox.showerror("Erro", "Digite números válidos")
-
     def excluir_produto():
         if not is_admin(username):
             messagebox.showerror(
@@ -1370,7 +1263,6 @@ def abrir_sistema_com_logo(username, login_win):
             with conn:
                 cursor.execute("DELETE FROM produtos WHERE codigo=?", (codigo,))
             listar_estoque()
-
     def carregar_produto_selecionado():
         item = tree.selection()
         if not item:
@@ -1398,7 +1290,6 @@ def abrir_sistema_com_logo(username, login_win):
             except Exception:
                 ent_custo.insert(0, str(r[0]))
         return vals[0]
-
     def salvar_edicao_produto():
         codigo = ent_codigo.get().strip()
         if not codigo:
@@ -1435,7 +1326,6 @@ def abrir_sistema_com_logo(username, login_win):
             ent_codigo.delete(0, "end")
         except ValueError:
             messagebox.showerror("Erro", "Valores inválidos")
-
     tree.bind("<Double-1>", lambda e: carregar_produto_selecionado())
     btn_cad_prod = ttk.Button(
         btn_frame_est, text="Cadastrar", command=cadastrar_produto
@@ -1446,14 +1336,13 @@ def abrir_sistema_com_logo(username, login_win):
     btn_save_edit_prod = ttk.Button(
         btn_frame_est, text="Salvar Edição", command=salvar_edicao_produto
     )
-    btn_del_prod = ttk.Button(btn_frame_est, text="Excluir", command=excluir_produto)
+    btn_del_prod = ttk.Button(btn_frame_est, text="✖ Excluir", style="Danger.TButton", command=excluir_produto)
     btn_cad_prod.pack(side="left", padx=6)
     btn_edit_load_prod.pack(side="left", padx=6)
     btn_save_edit_prod.pack(side="left", padx=6)
     btn_del_prod.pack(side="left", padx=6)
     if not is_admin(username):
         btn_del_prod.state(["disabled"])
-
     # ====== CLIENTES ======
     # -- TABELA --
     frame_cli = ttk.Frame(aba_clientes)
@@ -1471,7 +1360,6 @@ def abrir_sistema_com_logo(username, login_win):
     scroll_cli = ttk.Scrollbar(frame_cli, orient="vertical", command=tree_cli.yview)
     tree_cli.configure(yscroll=scroll_cli.set)
     scroll_cli.pack(side="right", fill="y")
-
     # -- FORMULÁRIO --
     form_cli = ttk.Frame(aba_clientes, padding=8)
     form_cli.pack(fill="x")
@@ -1486,7 +1374,6 @@ def abrir_sistema_com_logo(username, login_win):
     e_tel.grid(row=0, column=5, padx=6)
     e_cpf.bind("<KeyRelease>", lambda e: formatar_cpf(e, e_cpf))
     e_tel.bind("<KeyRelease>", lambda e: formatar_telefone(e, e_tel))
-
     # -- FUNÇÕES --
     def carregar_clientes():
         tree_cli.delete(*tree_cli.get_children())
@@ -1494,7 +1381,6 @@ def abrir_sistema_com_logo(username, login_win):
             "SELECT cpf, nome, telefone FROM clientes ORDER BY nome"
         ):
             tree_cli.insert("", "end", values=(cpf, nome, tel))
-
     def salvar_cliente():
         cpf = e_cpf.get()
         nome = e_nome.get()
@@ -1508,14 +1394,12 @@ def abrir_sistema_com_logo(username, login_win):
                 (cpf, nome, tel),
             )
         carregar_clientes()
-
     # -- BUSCA POR NOME (filtro incremental) --
     filtro_frame = ttk.Frame(aba_clientes, padding=8)
     filtro_frame.pack(fill="x")
     ttk.Label(filtro_frame, text="Buscar por nome").pack(side="left", padx=6)
     e_busca_nome = ttk.Entry(filtro_frame, width=30)
     e_busca_nome.pack(side="left")
-
     def carregar_clientes_filtrado(query: str = ""):
         tree_cli.delete(*tree_cli.get_children())
         q = (query or "").strip()
@@ -1528,13 +1412,10 @@ def abrir_sistema_com_logo(username, login_win):
             cursor.execute("SELECT cpf, nome, telefone FROM clientes ORDER BY nome")
         for cpf, nome, tel in cursor.fetchall():
             tree_cli.insert("", "end", values=(cpf, nome, tel))
-
     def _on_busca_nome(_evt=None):
         carregar_clientes_filtrado(e_busca_nome.get())
-
     e_busca_nome.bind("<KeyRelease>", _on_busca_nome)
     e_busca_nome.bind("<Return>", _on_busca_nome)
-
     def carregar_para_edicao(event=None):
         item = tree_cli.selection()
         if not item:
@@ -1547,13 +1428,11 @@ def abrir_sistema_com_logo(username, login_win):
         e_nome.insert(0, nome)
         e_tel.insert(0, tel)
         e_cpf.config(state="readonly")
-
     tree_cli.bind("<Double-1>", carregar_para_edicao)
     ttk.Button(form_cli, text="Salvar Cliente", command=salvar_cliente).grid(
         row=1, column=1, pady=8
     )
     carregar_clientes()
-
     # ====== VENDAS ======
     f_v = ttk.Frame(aba_vendas, padding=8)
     f_v.pack(fill="x", pady=6)
@@ -1581,10 +1460,8 @@ def abrir_sistema_com_logo(username, login_win):
     ent_pg_v.grid(row=2, column=3, padx=6, pady=4)
     lbl_total_v = ttk.Label(f_v, text="Total: R$ 0.00", font=("Segoe UI", 12, "bold"))
     lbl_total_v.grid(row=3, column=0, columnspan=2, pady=10, sticky="w", padx=6)
-
     var_desc_5 = tk.IntVar()
     var_desc_10 = tk.IntVar()
-
     def atualizar_total(event=None):
         try:
             codigo = ent_cod_v.get().strip()
@@ -1605,7 +1482,6 @@ def abrir_sistema_com_logo(username, login_win):
                 lbl_total_v.config(text="Total: R$ 0.00")
         except Exception:
             lbl_total_v.config(text="Total: R$ 0.00")
-
     ttk.Checkbutton(
         f_v,
         text="5%",
@@ -1618,7 +1494,6 @@ def abrir_sistema_com_logo(username, login_win):
         variable=var_desc_10,
         command=lambda: [var_desc_5.set(0), atualizar_total()],
     ).grid(row=4, column=1, sticky="w", padx=6)
-
     def buscar_cliente_v():
         cpf = ent_cpf_v.get().strip()
         cursor.execute("SELECT nome,telefone FROM clientes WHERE cpf=?", (cpf,))
@@ -1626,11 +1501,9 @@ def abrir_sistema_com_logo(username, login_win):
         if r:
             ent_nome_v.delete(0, "end")
             ent_nome_v.insert(0, r[0])
-
     ttk.Button(f_v, text="Buscar Cliente", command=buscar_cliente_v).grid(
         row=0, column=4, padx=6
     )
-
     def buscar_produto_v(event=None):
         codigo = ent_cod_v.get().strip()
         ent_prod_v.config(state="normal")
@@ -1643,12 +1516,10 @@ def abrir_sistema_com_logo(username, login_win):
             ent_prod_v.insert(0, "Produto não encontrado")
         ent_prod_v.config(state="readonly")
         atualizar_total()
-
     ent_cod_v.bind("<KeyRelease>", buscar_produto_v)
     ent_cod_v.bind("<FocusOut>", buscar_produto_v)
     ent_qtd_v.bind("<KeyRelease>", atualizar_total)
     ent_qtd_v.bind("<FocusOut>", atualizar_total)
-
     def finalizar_venda():
         try:
             cpf = ent_cpf_v.get().strip()
@@ -1715,11 +1586,9 @@ def abrir_sistema_com_logo(username, login_win):
             var_desc_10.set(0)
         except Exception as ex:
             messagebox.showerror("Erro", f"Ocorreu um erro na venda\n{ex}")
-
     ttk.Button(f_v, text="Finalizar Venda", command=finalizar_venda).grid(
         row=5, column=0, columnspan=2, pady=10, sticky="w", padx=6
     )
-
     hist_v_frame = ttk.Frame(aba_vendas, padding=(8, 0))
     hist_v_frame.pack(fill="both", expand=True)
     top_hist = ttk.Frame(hist_v_frame)
@@ -1738,7 +1607,6 @@ def abrir_sistema_com_logo(username, login_win):
     combo_filtro_pg.pack(side="right", padx=6)
     combo_filtro_pg.set("")
     ttk.Label(top_hist, text="Filtrar por pagamento:").pack(side="right")
-
     tree_vendas_frame = ttk.Frame(hist_v_frame)
     tree_vendas_frame.pack(fill="both", expand=True)
     tree_vendas = ttk.Treeview(
@@ -1763,11 +1631,11 @@ def abrir_sistema_com_logo(username, login_win):
     )
     tree_vendas.configure(yscroll=scrollbar_vendas.set)
     scrollbar_vendas.pack(side="right", fill="y")
-    tree_vendas.tag_configure("PIX", background="#e6ffed")
-    tree_vendas.tag_configure("Cartão", background="#e6f0ff")
-    tree_vendas.tag_configure("Dinheiro", background="#fff5e6")
-    tree_vendas.tag_configure("default", background="white")
-
+    # >>> Ajuste de contraste nas tags de vendas
+    tree_vendas.tag_configure("PIX",      background="#e6ffed", foreground="black")
+    tree_vendas.tag_configure("Cartão",   background="#e6f0ff", foreground="black")
+    tree_vendas.tag_configure("Dinheiro", background="#fff5e6", foreground="black")
+    tree_vendas.tag_configure("default",  background="white",    foreground="black")
     def carregar_vendas_dia():
         tree_vendas.delete(*tree_vendas.get_children())
         hoje = datetime.datetime.now().strftime("%d/%m/%Y")
@@ -1800,9 +1668,7 @@ def abrir_sistema_com_logo(username, login_win):
                 values=(hora, cliente, produto, qtd, pagamento, f"R$ {total:.2f}"),
                 tags=(tag,),
             )
-
     combo_filtro_pg.bind("<<ComboboxSelected>>", lambda e: carregar_vendas_dia())
-
     # ====== CAIXA ======
     f_cx = ttk.Frame(aba_caixa, padding=8)
     f_cx.pack(fill="both", expand=True)
@@ -1812,24 +1678,19 @@ def abrir_sistema_com_logo(username, login_win):
     lbl_total_cx.pack(side="left", padx=6)
     lbl_data_hora = ttk.Label(top_cx, text="", font=("Segoe UI", 10))
     lbl_data_hora.pack(side="right", padx=6)
-
     caixa_ops = ttk.Frame(f_cx)
     caixa_ops.pack(fill="x", pady=6)
-
     frm_saida = ttk.Frame(caixa_ops)
     frm_saida.pack(side="left", padx=6)
     ttk.Label(frm_saida, text="Saída de Caixa").pack(anchor="w")
-
     # Valor
     ent_saida_cx = ttk.Entry(frm_saida, width=20)
     ent_saida_cx.pack(anchor="w", pady=4)
     ent_saida_cx.bind("<FocusOut>", lambda e: formatar_moeda(e, ent_saida_cx))
-
     # >>> NOVO: Motivo da saída
     ttk.Label(frm_saida, text="Motivo").pack(anchor="w")
     ent_motivo_cx = ttk.Entry(frm_saida, width=30)
     ent_motivo_cx.pack(anchor="w", pady=4)
-
     def registrar_saida_caixa():
         valor_text = ent_saida_cx.get().replace("R$", "").replace(",", ".").strip()
         motivo = ent_motivo_cx.get().strip()
@@ -1861,14 +1722,11 @@ def abrir_sistema_com_logo(username, login_win):
             )
         except ValueError:
             messagebox.showerror("Erro", "Valor inválido")
-
     ttk.Button(caixa_ops, text="Registrar Saída", command=registrar_saida_caixa).pack(
         side="left", padx=6, pady=10
     )
-    ttk.Button(caixa_ops, text="Fechar Caixa", style="FecharCaixa.TButton", command=lambda: fechar_caixa()).pack(side="left", padx=6, pady=10)
-
+    ttk.Button(caixa_ops, text="🔒 Fechar Caixa", style="FecharCaixa.TButton", command=lambda: fechar_caixa()).pack(side="left", padx=6, pady=10)
     ttk.Separator(f_cx, orient="horizontal").pack(fill="x", pady=6)
-
     tree_cx_frame = ttk.Frame(f_cx)
     tree_cx_frame.pack(fill="both", expand=True)
     tree_cx = ttk.Treeview(
@@ -1884,7 +1742,6 @@ def abrir_sistema_com_logo(username, login_win):
     )
     tree_cx.configure(yscroll=scrollbar_cx.set)
     scrollbar_cx.pack(side="right", fill="y")
-
     def carregar_historico_cx():
         try:
             if not tree_cx.winfo_exists():
@@ -1898,7 +1755,6 @@ def abrir_sistema_com_logo(username, login_win):
             return
         except Exception as ex:
             logging.error(f"Erro ao carregar histórico de caixa: {ex}", exc_info=True)
-
     def atualizar_caixa():
         agora = datetime.datetime.now()
         hoje = agora.strftime("%d/%m/%Y")
@@ -1913,26 +1769,23 @@ def abrir_sistema_com_logo(username, login_win):
                         "INSERT OR REPLACE INTO fechamento_caixa (data,total) VALUES (?,?)",
                         (ultima_data, total_ultimo),
                     )
-                    cursor.execute("DELETE FROM caixa WHERE data=?", (ultima_data,))
+                cursor.execute("DELETE FROM caixa WHERE data=?", (ultima_data,))
                 conn.commit()
         cursor.execute("SELECT SUM(valor) FROM caixa WHERE data=?", (hoje,))
         total_hoje = cursor.fetchone()[0] or 0
         lbl_total_cx.config(
-            text=f"Total arrecadado hoje: R$ {total_hoje:.2f} | Líquido: R$ {total_hoje:.2f}"
+            text=f"Total arrecadado hoje: R$ {total_hoje:.2f} \n Líquido: R$ {total_hoje:.2f}"
         )
         lbl_data_hora.config(text=f"Data e Hora: {agora.strftime('%d/%m/%Y %H:%M:%S')}")
         if aba_caixa.winfo_exists():
             aba_caixa.after(1000, atualizar_caixa)
-
     def fechar_caixa():
         hoje = datetime.datetime.now().strftime("%d/%m/%Y")
         cursor.execute("SELECT SUM(valor) FROM caixa WHERE data=?", (hoje,))
         total = cursor.fetchone()[0] or 0
-
         if total == 0:
             messagebox.showinfo("Fechar Caixa", "Nenhuma venda registrada hoje!")
             return
-
         if messagebox.askyesno(
             "Fechar Caixa", f"Total do dia: R$ {total:.2f}\nDeseja fechar o caixa?"
         ):
@@ -1942,10 +1795,8 @@ def abrir_sistema_com_logo(username, login_win):
                     "INSERT OR REPLACE INTO fechamento_caixa (data, total) VALUES (?, ?)",
                     (hoje, total),
                 )
-
             # 2) Gera o PDF com VENDAS e SAÍDAS (os dados ainda estão na tabela 'caixa')
             pdf_path = gerar_relatorio_vendas_dia_pdf(data_str=hoje)
-
             # 3) Backups automáticos (banco, cupons, OS, relatórios)
             try:
                 backup_banco()
@@ -1954,18 +1805,15 @@ def abrir_sistema_com_logo(username, login_win):
                 backup_bulk_dir(os.path.join(os.getcwd(), "relatorios"), "relatorios")
             except Exception:
                 pass
-
             # 4) Somente agora apagamos os lançamentos do dia do caixa
             with conn:
                 cursor.execute("DELETE FROM caixa WHERE data=?", (hoje,))
-
             messagebox.showinfo(
                 "Fechar Caixa",
                 f"Caixa do dia {hoje} fechado com sucesso!\nRelatório gerado:\n{pdf_path}",
             )
             carregar_historico_cx()
             atualizar_caixa()
-
     # ====== MANUTENÇÃO ======
     f_m = ttk.Frame(aba_manutencao, padding=8)
     f_m.pack(fill="x", pady=6)
@@ -1986,7 +1834,6 @@ def abrir_sistema_com_logo(username, login_win):
     ent_valor_m = ttk.Entry(f_m, width=18)
     ent_valor_m.grid(row=1, column=7, padx=6, pady=6)
     ent_valor_m.bind("<FocusOut>", lambda e: formatar_moeda(e, ent_valor_m))
-
     tree_m_frame = ttk.Frame(aba_manutencao)
     tree_m_frame.pack(fill="both", expand=True, pady=8)
     tree_m = ttk.Treeview(
@@ -2017,7 +1864,6 @@ def abrir_sistema_com_logo(username, login_win):
     scrollbar_m = ttk.Scrollbar(tree_m_frame, orient="vertical", command=tree_m.yview)
     tree_m.configure(yscroll=scrollbar_m.set)
     scrollbar_m.pack(side="right", fill="y")
-
     def carregar_manutencao():
         tree_m.delete(*tree_m.get_children())
         for row in cursor.execute(
@@ -2038,9 +1884,7 @@ def abrir_sistema_com_logo(username, login_win):
                     aprovado_text,
                 ),
             )
-
     carregar_manutencao()
-
     def buscar_cliente_m(event=None):
         try:
             cpf = ent_cpf_m.get().strip()
@@ -2053,11 +1897,9 @@ def abrir_sistema_com_logo(username, login_win):
                 ent_tel_m.insert(0, str(r[1] or ""))
         except Exception as ex:
             logging.error(f"Falha ao buscar cliente (OS): {ex}", exc_info=True)
-
     ttk.Button(f_m, text="Buscar Cliente", command=buscar_cliente_m).grid(
         row=0, column=6, padx=6
     )
-
     def cadastrar_manutencao():
         cpf = ent_cpf_m.get().strip()
         nome = ent_nome_m.get().strip()
@@ -2093,12 +1935,10 @@ def abrir_sistema_com_logo(username, login_win):
         ent_desc_m.delete(0, "end")
         ent_valor_m.delete(0, "end")
         messagebox.showinfo("OS", "Ordem de serviço registrada!")
-
     btn_reg_manut = ttk.Button(
         f_m, text="Registrar Manutenção", command=cadastrar_manutencao
     )
     btn_reg_manut.grid(row=2, column=0, columnspan=2, pady=8)
-
     def excluir_manutencao():
         if not is_admin(username):
             messagebox.showerror(
@@ -2115,14 +1955,12 @@ def abrir_sistema_com_logo(username, login_win):
             with conn:
                 cursor.execute("DELETE FROM manutencao WHERE os=?", (os_num,))
             carregar_manutencao()
-
     btn_excluir_manut = ttk.Button(
         f_m, text="Excluir Manutenção", command=excluir_manutencao
     )
     btn_excluir_manut.grid(row=2, column=2, columnspan=2, pady=8)
     if not is_admin(username):
         btn_excluir_manut.state(["disabled"])
-
     def aprovar_manutencao():
         selected = tree_m.selection()
         if not selected:
@@ -2134,7 +1972,7 @@ def abrir_sistema_com_logo(username, login_win):
         os_num = tree_m.item(item_id)["values"][0]
         cursor.execute(
             "SELECT COALESCE(valor,0), COALESCE(aprovado,0) FROM manutencao WHERE os=?",
-            (os_num,),  # sempre tupla
+            (os_num,), # sempre tupla
         )
         r = cursor.fetchone()
         if not r:
@@ -2158,7 +1996,7 @@ def abrir_sistema_com_logo(username, login_win):
                 )
                 cursor.execute(
                     "UPDATE manutencao SET aprovado=1 WHERE os=?", (os_num,)
-                )  # vírgula aqui
+                ) # vírgula aqui
             carregar_manutencao()
             atualizar_caixa()
             messagebox.showinfo(
@@ -2168,16 +2006,12 @@ def abrir_sistema_com_logo(username, login_win):
         except Exception as ex:
             logging.error("Falha ao aprovar manutenção", exc_info=True)
             messagebox.showerror("Erro", f"Falha ao aprovar manutenção:\n{ex}")
-
     # Cria o botão APÓS definir a função
     btn_aprovar_manut = ttk.Button(
         f_m, text="Manutenção Aprovada", command=aprovar_manutencao
     )
     btn_aprovar_manut.grid(row=2, column=4, columnspan=2, pady=8)
-
-    
-
-# ====== DEVOLUÇÃO ======
+    # ====== DEVOLUÇÃO ======
     f_d = ttk.Frame(aba_devolucao, padding=8)
     f_d.pack(fill="x", pady=6)
     ttk.Label(f_d, text="Quem devolve").grid(
@@ -2195,7 +2029,6 @@ def abrir_sistema_com_logo(username, login_win):
     )
     ent_motivo_dev = ttk.Entry(f_d, width=80)
     ent_motivo_dev.grid(row=1, column=1, columnspan=3, padx=6, pady=4, sticky="we")
-
     hist_d_frame = ttk.Frame(aba_devolucao, padding=(8, 0))
     hist_d_frame.pack(fill="both", expand=True)
     top_hist_d = ttk.Frame(hist_d_frame)
@@ -2206,7 +2039,6 @@ def abrir_sistema_com_logo(username, login_win):
     ttk.Button(
         top_hist_d, text="Atualizar", command=lambda: carregar_devolucoes()
     ).pack(side="left", padx=6)
-
     tree_dev_frame = ttk.Frame(hist_d_frame)
     tree_dev_frame.pack(fill="both", expand=True)
     tree_dev = ttk.Treeview(
@@ -2230,19 +2062,21 @@ def abrir_sistema_com_logo(username, login_win):
     )
     tree_dev.configure(yscroll=scrollbar_dev.set)
     scrollbar_dev.pack(side="right", fill="y")
-
     def carregar_devolucoes():
         tree_dev.delete(*tree_dev.get_children())
         cursor.execute(
             """
             SELECT data, hora, nome, item, motivo
             FROM devolucoes
-            ORDER BY date(substr(data,7,4) || '-' || substr(data,4,2) || '-' || substr(data,1,2)) DESC, hora DESC
+            ORDER BY date(substr(data,7,4)
+                         || '-'
+                         || substr(data,4,2)
+                         || '-'
+                         || substr(data,1,2)) DESC, hora DESC
             """
         )
         for data, hora, nome, item, motivo in cursor.fetchall():
             tree_dev.insert("", "end", values=(data, hora, nome, item, motivo))
-
     def registrar_devolucao():
         nome = ent_nome_dev.get().strip()
         item = ent_devolucao.get().strip()
@@ -2267,12 +2101,10 @@ def abrir_sistema_com_logo(username, login_win):
             carregar_devolucoes()
         except Exception as ex:
             messagebox.showerror("Erro", f"Falha ao registrar devolução\n{ex}")
-
     ttk.Button(f_d, text="Registrar Devolução", command=registrar_devolucao).grid(
         row=2, column=0, pady=10, sticky="w", padx=6
     )
     carregar_devolucoes()
-
     # ---- Funções de UI: toast e agendador de backup ----
     def _show_toast_backup(text: str, level: str = "info"):
         try:
@@ -2312,7 +2144,6 @@ def abrir_sistema_com_logo(username, login_win):
             )
         except Exception:
             pass
-
     def _backup_timer_tick():
         """Executa os backups e reprograma o próximo disparo (30 min)."""
         try:
@@ -2330,16 +2161,13 @@ def abrir_sistema_com_logo(username, login_win):
             pass
         finally:
             root.after(1_800_000, _backup_timer_tick)
-
     # Disparo inicial: 5 min; depois agenda de 30 min
     root.after(300_000, _backup_timer_tick)
-
     # Atualiza os totais do caixa ao abrir a janela
     try:
         atualizar_caixa()
     except Exception:
         pass
-
     ttk.Separator(root, orient="horizontal").pack(
         fill="x", padx=8, pady=(2, 2), side="bottom"
     )
@@ -2353,8 +2181,6 @@ def abrir_sistema_com_logo(username, login_win):
     ).pack(side="bottom", fill="x", pady=(0, 8))
     lbl_status_backup = ttk.Label(root, text="Backup: aguardando...", anchor="center")
     lbl_status_backup.pack(side="bottom", fill="x")
-
-
 # ================= TELA DE LOGIN =================
 def abrir_login():
     login_win = tk.Tk()
@@ -2362,17 +2188,14 @@ def abrir_login():
     login_win.geometry("420x300")
     login_win.resizable(False, False)
     setup_global_exception_handlers(login_win)
-
     style = ttk.Style()
     try:
         style.theme_use("clam")
     except Exception:
         pass
     style.configure("Footer.TLabel", foreground="red", font=("Segoe UI", 10, "bold"))
-
     frm = ttk.Frame(login_win, padding=12)
     frm.pack(fill="both", expand=True)
-
     logo_path = os.path.join(os.getcwd(), "logo.png")
     if os.path.exists(logo_path):
         try:
@@ -2389,17 +2212,14 @@ def abrir_login():
         ttk.Label(frm, text="BESIM COMPANY", font=("Segoe UI", 14, "bold")).pack(
             pady=(0, 8)
         )
-
     ttk.Label(frm, text="Usuário").pack(anchor="w", pady=(6, 0))
     ent_user = ttk.Entry(frm)
     ent_user.pack(fill="x", pady=4)
     ttk.Label(frm, text="Senha").pack(anchor="w", pady=(6, 0))
     ent_pass = ttk.Entry(frm, show="*")
     ent_pass.pack(fill="x", pady=4)
-
     login_win.ent_user = ent_user
     login_win.ent_pass = ent_pass
-
     def tentar_login():
         user = ent_user.get().strip()
         pw = ent_pass.get().strip()
@@ -2422,7 +2242,6 @@ def abrir_login():
                 login_win.deiconify()
         else:
             messagebox.showerror("Erro", "Senha incorreta")
-
     def criar_usuario():
         user = ent_user.get().strip()
         pw = ent_pass.get().strip()
@@ -2438,7 +2257,6 @@ def abrir_login():
             messagebox.showinfo("OK", "Usuário criado com sucesso")
         except sqlite3.IntegrityError:
             messagebox.showerror("Erro", "Usuário já existe")
-
     btn_frame = ttk.Frame(frm)
     btn_frame.pack(fill="x", pady=12)
     ttk.Button(btn_frame, text="Entrar", command=tentar_login).pack(
@@ -2447,7 +2265,6 @@ def abrir_login():
     ttk.Button(btn_frame, text="Criar Usuário", command=criar_usuario).pack(
         side="left", expand=True, padx=6
     )
-
     ttk.Separator(login_win, orient="horizontal").pack(
         fill="x", padx=8, pady=(4, 2), side="bottom"
     )
@@ -2459,7 +2276,6 @@ def abrir_login():
         anchor="center",
         justify="center",
     ).pack(side="bottom", fill="x", pady=(0, 8))
-
     def on_close_login():
         if messagebox.askyesno("Sair", "Deseja encerrar o sistema?"):
             try:
@@ -2469,11 +2285,8 @@ def abrir_login():
             login_win.destroy()
         else:
             return
-
     login_win.protocol("WM_DELETE_WINDOW", on_close_login)
     login_win.mainloop()
-
-
 # ===================== MAIN =====================
 if __name__ == "__main__":
     try:
