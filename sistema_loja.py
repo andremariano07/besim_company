@@ -92,7 +92,7 @@ def backup_bulk_dir(local_dir: str, tipo: str):
 DISABLE_AUTO_UPDATE = (
     True  # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "2.1"
+APP_VERSION = "2.2"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -1060,6 +1060,201 @@ def abrir_sistema_com_logo(username, login_win):
     abas.add(aba_manutencao, text="Manutenção")
     abas.add(aba_devolucao, text="Devolução")
 
+    # ====== UPGRADE ======
+
+    aba_upgrade = ttk.Frame(abas, padding=10)
+    abas.add(aba_upgrade, text="Upgrade")
+
+    f_u = ttk.Frame(aba_upgrade, padding=8)
+    f_u.pack(fill="x", pady=6)
+
+    ttk.Label(f_u, text="CPF").grid(row=0, column=0, sticky="w", padx=6, pady=4)
+    ent_cpf_u = ttk.Entry(f_u)
+    ent_cpf_u.grid(row=0, column=1, padx=6, pady=4)
+    ent_cpf_u.bind("<KeyRelease>", lambda e: formatar_cpf(e, ent_cpf_u))
+
+    ttk.Label(f_u, text="Nome").grid(row=0, column=2, sticky="w", padx=6, pady=4)
+    ent_nome_u = ttk.Entry(f_u)
+    ent_nome_u.grid(row=0, column=3, padx=6, pady=4)
+
+    ttk.Label(f_u, text="Telefone").grid(row=0, column=4, sticky="w", padx=6, pady=4)
+    ent_tel_u = ttk.Entry(f_u)
+    ent_tel_u.grid(row=0, column=5, padx=6, pady=4)
+    ent_tel_u.bind("<KeyRelease>", lambda e: formatar_telefone(e, ent_tel_u))
+
+    ttk.Label(f_u, text="Descrição").grid(row=1, column=0, sticky="w", padx=6, pady=6)
+    ent_desc_u = ttk.Entry(f_u, width=70)
+    ent_desc_u.grid(row=1, column=1, columnspan=4, pady=4, padx=6, sticky="we")
+
+    ttk.Label(f_u, text="Valor").grid(row=1, column=5, sticky="w", padx=6, pady=6)
+    ent_valor_u = ttk.Entry(f_u, width=18)
+    ent_valor_u.grid(row=1, column=6, padx=6, pady=6)
+    ent_valor_u.bind("<FocusOut>", lambda e: formatar_moeda(e, ent_valor_u))
+    
+    ttk.Label(f_u, text="Pagamento").grid(row=2, column=5, sticky="w", padx=6, pady=6)
+    ent_pg_u = ttk.Combobox(f_u, values=["PIX", "Cartão", "Dinheiro"], width=16)
+    ent_pg_u.grid(row=2, column=6, padx=6, pady=6)
+
+    def buscar_cliente_u():
+        cpf = ent_cpf_u.get().strip()
+        cursor.execute("SELECT nome, telefone FROM clientes WHERE cpf=?", (cpf,))
+        r = cursor.fetchone()
+        if r:
+            ent_nome_u.delete(0, "end")
+            ent_nome_u.insert(0, r[0])
+            ent_tel_u.delete(0, "end")
+            ent_tel_u.insert(0, r[1])
+
+    ttk.Button(f_u, text="Buscar Cliente", command=buscar_cliente_u).grid(row=0, column=6, padx=6)
+
+    def finalizar_upgrade():
+        try:
+            cpf = ent_cpf_u.get().strip()
+            cliente = ent_nome_u.get().strip() or "Sem Nome"
+            telefone = ent_tel_u.get().strip()
+            descricao = ent_desc_u.get().strip()
+            valor_text = ent_valor_u.get().replace("R$", "").replace(",", ".").strip()
+            if not descricao or not valor_text:
+                messagebox.showwarning("Atenção", "Informe descrição e valor válido")
+                return
+            valor = float(valor_text)
+            data = datetime.datetime.now().strftime("%d/%m/%Y")
+            hora = datetime.datetime.now().strftime("%H:%M:%S")
+            with conn:
+                cursor.execute("INSERT INTO vendas(cliente,cpf,produto,quantidade,total,pagamento,data,hora) VALUES (?,?,?,?,?,?,?,?)", (cliente, cpf, descricao, 1, valor, (f"Upgrade - {ent_pg_u.get().strip()}" if ent_pg_u.get().strip() else "Upgrade"), data, hora))
+                cursor.execute("INSERT INTO caixa(valor,data,hora,motivo) VALUES (?,?,?,?)", (valor, data, hora, (f"Upgrade - {ent_pg_u.get().strip()}" if ent_pg_u.get().strip() else "Upgrade")))
+                cursor.execute("INSERT OR IGNORE INTO clientes(cpf,nome,telefone) VALUES (?,?,?)", (cpf, cliente, telefone))
+            try:
+                gerar_cupom(cliente, descricao, 1, (ent_pg_u.get().strip() or "Upgrade"), valor)
+            except Exception:
+                pass
+            messagebox.showinfo("Upgrade", f"Upgrade registrado! Total: R$ {valor:.2f}")
+            carregar_upgrades()
+            ent_cpf_u.delete(0, "end")
+            ent_nome_u.delete(0, "end")
+            ent_tel_u.delete(0, "end")
+            ent_desc_u.delete(0, "end")
+            ent_valor_u.delete(0, "end")
+        except Exception as ex:
+            messagebox.showerror("Erro", f"Falha ao registrar upgrade\n{ex}")
+    ttk.Button(f_u, text="Finalizar Upgrade", command=finalizar_upgrade).grid(row=2, column=0, columnspan=2, pady=10, sticky="w", padx=6)
+
+    # Histórico de Upgrades
+    hist_u_frame = ttk.Frame(aba_upgrade, padding=(8, 0))
+    hist_u_frame.pack(fill="both", expand=True)
+    top_hist_u = ttk.Frame(hist_u_frame)
+    top_hist_u.pack(fill="x", pady=(6, 6))
+    ttk.Label(top_hist_u, text="Histórico de Upgrades", font=("Segoe UI", 11, "bold")).pack(side="left", padx=6)
+    ttk.Button(top_hist_u, text="Atualizar", command=lambda: carregar_upgrades()).pack(side="left", padx=6)
+
+    tree_up_frame = ttk.Frame(hist_u_frame)
+    tree_up_frame.pack(fill="both", expand=True)
+    tree_upgrades = ttk.Treeview(tree_up_frame, columns=("Hora", "Cliente", "Descrição", "Pagamento", "Valor"), show="headings", height=10)
+    for col, txt, anchor, width in [("Hora", "Hora", "center", 120), ("Cliente", "Cliente", "w", 200), ("Descrição", "Descrição", "w", 240), ("Pagamento", "Pagamento", "center", 140), ("Valor", "Valor", "e", 120)]:
+        tree_upgrades.heading(col, text=txt)
+        tree_upgrades.column(col, width=width, anchor=anchor)
+    tree_upgrades.pack(side="left", fill="both", expand=True)
+    scrollbar_upgrades = ttk.Scrollbar(tree_up_frame, orient="vertical", command=tree_upgrades.yview)
+    tree_upgrades.configure(yscroll=scrollbar_upgrades.set)
+    scrollbar_upgrades.pack(side="right", fill="y")
+
+
+
+    # ====== FUNÇÃO PARA GERAR RELATÓRIO DE UPGRADES EM PDF ======
+
+    def gerar_relatorio_upgrades_dia_pdf(data_str: str = None):
+        hoje = datetime.datetime.now().strftime("%d/%m/%Y")
+        data_alvo = data_str or hoje
+        pasta_rel = os.path.join(os.getcwd(), "relatorios")
+        os.makedirs(pasta_rel, exist_ok=True)
+        nome_arquivo = os.path.join(pasta_rel, f"relatorio_upgrades_{data_alvo.replace('/', '-')}.pdf")
+
+        c = canvas.Canvas(nome_arquivo, pagesize=A4)
+        logo_path_local = os.path.join(os.getcwd(), "logo.png")
+        if os.path.exists(logo_path_local):
+            try:
+                c.drawImage(ImageReader(logo_path_local), 40, 780, width=140, height=40, preserveAspectRatio=True, mask="auto")
+            except Exception:
+                pass
+
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(40, 760, f"Relatório de Upgrades - {data_alvo}")
+        c.setFont("Helvetica", 11)
+        c.drawString(40, 742, "-" * 110)
+        y = 720
+
+        cursor.execute("SELECT hora, cliente, produto, pagamento, total FROM vendas WHERE data=? AND pagamento LIKE 'Upgrade%' ORDER BY hora DESC", (hoje,))
+        linhas = cursor.fetchall()
+        total_dia = 0.0
+
+        if not linhas:
+            c.drawString(40, y, "Nenhum upgrade registrado neste dia.")
+            y -= 18
+        else:
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(40, y, "Hora")
+            c.drawString(100, y, "Cliente")
+            c.drawString(280, y, "Descrição")
+            c.drawString(460, y, "Pagto")
+            c.drawString(520, y, "Valor")
+            y -= 16
+            c.setFont("Helvetica", 10)
+            for hora, cliente, produto, pagamento, total in linhas:
+                total_dia += total or 0.0
+                c.drawString(40, y, str(hora))
+                c.drawString(100, y, str(cliente)[:24])
+                c.drawString(280, y, str(produto)[:30])
+                c.drawString(460, y, str(pagamento or "").replace("Upgrade - ", "")[:12])
+                c.drawRightString(590, y, f"R$ {float(total):.2f}")
+                y -= 16
+                if y < 60:
+                    c.showPage()
+                    y = 780
+                    c.setFont("Helvetica-Bold", 12)
+                    c.drawString(40, y, f"Relatório de Upgrades - {data_alvo}")
+                    y -= 20
+                    c.setFont("Helvetica-Bold", 10)
+                    c.drawString(40, y, "Hora")
+                    c.drawString(100, y, "Cliente")
+                    c.drawString(280, y, "Descrição")
+                    c.drawString(460, y, "Pagto")
+                    c.drawString(520, y, "Valor")
+                    y -= 16
+                    c.setFont("Helvetica", 10)
+
+        y -= 24
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(40, y, f"Total de upgrades do dia: R$ {total_dia:.2f}")
+        c.save()
+
+        try:
+            backup_pdf(nome_arquivo, "relatorios")
+        except Exception:
+            pass
+
+        try:
+            sistema = platform.system()
+            if sistema == "Windows":
+                os.startfile(nome_arquivo)
+            elif sistema == "Darwin":
+                os.system(f"open '{nome_arquivo}'")
+            else:
+                os.system(f"xdg-open '{nome_arquivo}'")
+        except Exception:
+            pass
+        bring_app_to_front()
+        return nome_arquivo
+
+    # Adiciona botão na aba Upgrade
+    ttk.Button(top_hist_u, text="Exportar PDF", command=lambda: gerar_relatorio_upgrades_dia_pdf()).pack(side="left", padx=6)
+
+    def carregar_upgrades():
+        tree_upgrades.delete(*tree_upgrades.get_children())
+        hoje = datetime.datetime.now().strftime("%d/%m/%Y")
+        cursor.execute("SELECT hora, cliente, produto, pagamento, total FROM vendas WHERE data=? AND pagamento LIKE 'Upgrade%' ORDER BY hora DESC", (hoje,))
+        for hora, cliente, produto, pagamento, total in cursor.fetchall():
+            tree_upgrades.insert("", "end", values=(hora, cliente, produto, (pagamento or "").replace("Upgrade - ", ""), f"R$ {total:.2f}"))
+
     # ====== ESTOQUE ======
     est_top = ttk.Frame(aba_estoque)
     est_top.pack(fill="both", expand=True)
@@ -1980,7 +2175,9 @@ def abrir_sistema_com_logo(username, login_win):
     )
     btn_aprovar_manut.grid(row=2, column=4, columnspan=2, pady=8)
 
-    # ====== DEVOLUÇÃO ======
+    
+
+# ====== DEVOLUÇÃO ======
     f_d = ttk.Frame(aba_devolucao, padding=8)
     f_d.pack(fill="x", pady=6)
     ttk.Label(f_d, text="Quem devolve").grid(
