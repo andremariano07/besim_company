@@ -33,10 +33,96 @@ import glob
 import certifi
 from functools import partial
 from reportlab.lib.pagesizes import A4
+import smtplib
+from email.message import EmailMessage
+import os
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
-# ===================== BACKUP GOOGLE DRIVE (pasta sincronizada) =====================
-GOOGLE_DRIVE_BACKUP = r"G:\Meu Drive\BkpBesim"
+
+# ================= ENVIO DE CUPOM POR E-MAIL (movido para topo) =================
+
+def _load_email_config():
+    """Lê email_config.txt (chaves: EMAIL_GMAIL, EMAIL_GMAIL_APP)."""
+    cfg = {}
+    try:
+        import os
+        path = os.path.join(os.getcwd(), "email_config.txt")
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        k, v = line.split("=", 1)
+                        cfg[k.strip()] = v.strip()
+    except Exception as ex:
+        logging.error("Falha ao ler email_config.txt: " + str(ex))
+    return cfg
+
+
+
+
+def enviar_cupom_email(destinatario_email, caminho_pdf):
+    """Envia o cupom por e-mail usando Gmail.
+    Retorna (True, "OK") em caso de sucesso; em falha retorna (False, mensagem_detalhada)."""
+    try:
+        import smtplib
+        from email.message import EmailMessage
+        import datetime
+        import os
+        if not destinatario_email or "@" not in destinatario_email:
+            msg = "E-mail do destinatário vazio ou inválido."
+            logging.error(msg)
+            return False, msg
+        if not os.path.isfile(caminho_pdf):
+            msg = f"Arquivo PDF não encontrado: {caminho_pdf}"
+            logging.error(msg)
+            return False, msg
+        cfg = _load_email_config()
+        EMAIL_REMETENTE = cfg.get("EMAIL_GMAIL") or os.getenv("EMAIL_GMAIL")
+        SENHA_APP = cfg.get("EMAIL_GMAIL_APP") or os.getenv("EMAIL_GMAIL_APP")
+        if not EMAIL_REMETENTE or not SENHA_APP:
+            msg = ("Credenciais não configuradas. Configure EMAIL_GMAIL e EMAIL_GMAIL_APP em "
+                   "email_config.txt ou variáveis de ambiente.")
+            logging.error(msg)
+            return False, msg
+        msg_obj = EmailMessage()
+        msg_obj["Subject"] = "Seu cupom de compra - BESIM COMPANY"
+        msg_obj["From"] = EMAIL_REMETENTE
+        msg_obj["To"] = destinatario_email
+        msg_obj["Date"] = datetime.datetime.now().strftime('%a, %d %b %Y %H:%M:%S')
+        msg_obj.set_content("""Olá!
+Segue em anexo o cupom da sua compra.
+Obrigado pela preferência!""")
+        with open(caminho_pdf, "rb") as fpdf:
+            msg_obj.add_attachment(
+                fpdf.read(), maintype="application", subtype="pdf",
+                filename=os.path.basename(caminho_pdf)
+            )
+        try:
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=20) as smtp:
+                smtp.login(EMAIL_REMETENTE, SENHA_APP)
+                smtp.send_message(msg_obj)
+                return True, "OK"
+        except smtplib.SMTPAuthenticationError as e:
+            logging.error("Falha de autenticação SMTP: %s", str(e))
+            return False, f"Autenticação SMTP falhou: {e}"
+        except Exception as e_ssl:
+            try:
+                with smtplib.SMTP("smtp.gmail.com", 587, timeout=20) as smtp:
+                    smtp.ehlo()
+                    smtp.starttls()
+                    smtp.login(EMAIL_REMETENTE, SENHA_APP)
+                    smtp.send_message(msg_obj)
+                    return True, "OK"
+            except Exception as e_tls:
+                logging.error("Erro ao enviar e-mail (SSL e TLS falharam): %s | %s", str(e_ssl), str(e_tls))
+                return False, f"Falha SSL/TLS: {e_ssl} | {e_tls}"
+    except Exception as e:
+        logging.error("Erro inesperado ao enviar e-mail: %s", str(e), exc_info=True)
+        return False, f"Erro inesperado: {e}"
+
 def garantir_pastas_backup():
     try:
         for pasta in ("banco", "cupons", "OS", "relatorios"):
@@ -82,7 +168,7 @@ def backup_bulk_dir(local_dir: str, tipo: str):
 DISABLE_AUTO_UPDATE = DISABLE_AUTO_UPDATE = (
     False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "2.3"
+APP_VERSION = "2.4"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -535,6 +621,8 @@ def gerar_cupom(cliente, produto, qtd, pagamento, total):
     except Exception:
         pass
     bring_app_to_front()
+    return nome_arquivo
+
 def gerar_os_pdf(os_num, nome, cpf, telefone, descricao, valor):
     agora = datetime.datetime.now()
     pasta_os = os.path.join(os.getcwd(), "OS")
@@ -985,6 +1073,17 @@ def abrir_sistema_com_logo(username, login_win):
     abas.add(aba_caixa, text="Caixa")
     abas.add(aba_manutencao, text="Manutenção")
     abas.add(aba_devolucao, text="Devolução")
+
+    # Atualiza automaticamente a aba Vendas quando ela for selecionada
+    def _on_tab_changed(event=None):
+        try:
+            if abas.select() == aba_vendas._w:
+                carregar_vendas_dia()
+        except Exception:
+            pass
+
+    abas.bind("<<NotebookTabChanged>>", _on_tab_changed)
+
     # ====== UPGRADE ======
     aba_upgrade = ttk.Frame(abas, padding=10)
     abas.add(aba_upgrade, text="Upgrade")
@@ -1043,6 +1142,11 @@ def abrir_sistema_com_logo(username, login_win):
             except Exception:
                 pass
             messagebox.showinfo("Upgrade", f"Upgrade registrado! Total: R$ {valor:.2f}")
+            # Atualiza também a lista de vendas do dia (upgrades geram venda)
+            try:
+                aba_vendas.after(30, carregar_vendas_dia)
+            except Exception:
+                pass
             carregar_upgrades()
             ent_cpf_u.delete(0, "end")
             ent_nome_u.delete(0, "end")
@@ -1444,6 +1548,10 @@ def abrir_sistema_com_logo(username, login_win):
     ttk.Label(f_v, text="Nome").grid(row=0, column=2, sticky="w", padx=6, pady=4)
     ent_nome_v = ttk.Entry(f_v)
     ent_nome_v.grid(row=0, column=3, padx=6, pady=4)
+
+    ttk.Label(f_v, text="E-mail").grid(row=0, column=4, sticky="w", padx=6, pady=4)
+    ent_email_v = ttk.Entry(f_v, width=28)
+    ent_email_v.grid(row=0, column=5, padx=6, pady=4)
     ttk.Label(f_v, text="Código Produto").grid(
         row=1, column=0, sticky="w", padx=6, pady=4
     )
@@ -1494,6 +1602,14 @@ def abrir_sistema_com_logo(username, login_win):
         variable=var_desc_10,
         command=lambda: [var_desc_5.set(0), atualizar_total()],
     ).grid(row=4, column=1, sticky="w", padx=6)
+
+    var_enviar_email = tk.IntVar(value=1)
+    chk_email = ttk.Checkbutton(
+        f_v,
+        text="Enviar cupom por e-mail",
+        variable=var_enviar_email
+    )
+    chk_email.grid(row=4, column=2, columnspan=2, sticky="w", padx=6)
     def buscar_cliente_v():
         cpf = ent_cpf_v.get().strip()
         cursor.execute("SELECT nome,telefone FROM clientes WHERE cpf=?", (cpf,))
@@ -1567,28 +1683,87 @@ def abrir_sistema_com_logo(username, login_win):
                     (cpf, cliente),
                 )
             listar_estoque()
+            # Atualiza a lista de vendas do dia automaticamente
             try:
-                gerar_cupom(cliente or "", nome_prod, qtd, pagamento or "", total)
+                aba_vendas.after(30, carregar_vendas_dia)
             except Exception:
                 pass
-            messagebox.showinfo(
-                "Venda", "Venda realizada!\nTotal: R$ {:.2f}".format(total)
-            )
-            carregar_vendas_dia()
-            ent_cod_v.delete(0, "end")
-            ent_qtd_v.delete(0, "end")
-            ent_prod_v.config(state="normal")
-            ent_prod_v.delete(0, "end")
-            ent_prod_v.config(state="readonly")
-            ent_pg_v.set("")
-            lbl_total_v.config(text="Total: R$ 0.00")
-            var_desc_5.set(0)
-            var_desc_10.set(0)
+
+            # Gerar cupom e enviar por e-mail, se marcado
+            try:
+                caminho_pdf = gerar_cupom(cliente or "", nome_prod, qtd, pagamento or "", total)
+                # valida o caminho do PDF antes de enviar
+                if not caminho_pdf or not os.path.isfile(caminho_pdf):
+                    try:
+                        messagebox.showwarning("E-mail", "Cupom não foi gerado corretamente. O envio por e-mail foi pulado.")
+                    except Exception:
+                        pass
+                    email_cliente = ""  # força pular envio
+                # Captura e-mail e tenta enviar
+                try:
+                    email_cliente = ent_email_v.get().strip()
+                except Exception:
+                    email_cliente = ""
+                if var_enviar_email.get() == 1 and email_cliente:
+                    ok, detail = enviar_cupom_email(email_cliente, caminho_pdf)
+                    if not ok:
+                        try:
+                            messagebox.showwarning("E-mail", f"Falha ao enviar e-mail:\n{detail}")
+                        except Exception:
+                            pass
+            except Exception as e:
+                logging.error(f"Falha ao gerar/enviar cupom: {e}", exc_info=True)
+                try:
+                    messagebox.showerror("Cupom/E-mail", "Erro: " + str(e))
+                except Exception:
+                    pass
         except Exception as ex:
-            messagebox.showerror("Erro", f"Ocorreu um erro na venda\n{ex}")
-    ttk.Button(f_v, text="Finalizar Venda", command=finalizar_venda).grid(
-        row=5, column=0, columnspan=2, pady=10, sticky="w", padx=6
+            logging.error("Falha ao finalizar venda", exc_info=True)
+            try:
+                messagebox.showerror("Erro", f"Falha ao finalizar venda\n{ex}")
+            except Exception:
+                pass
+
+    # --- Botões de ação da venda (recriados) ---
+    acoes_venda = ttk.Frame(f_v)
+    acoes_venda.grid(row=3, column=2, columnspan=4, padx=6, pady=8, sticky="e")
+
+    btn_finalizar_venda = ttk.Button(
+        acoes_venda,
+        text="✓ Finalizar Venda",
+        style="Success.TButton",
+        command=finalizar_venda
     )
+    btn_finalizar_venda.pack(side="left", padx=6)
+
+    # (Opcional) Botão para limpar campos
+    def limpar_venda():
+        for w in (ent_cpf_v, ent_nome_v, ent_email_v, ent_cod_v, ent_prod_v, ent_qtd_v):
+            try:
+                w.config(state="normal")
+                w.delete(0, "end")
+            except Exception:
+                pass
+        ent_pg_v.set("")
+        var_desc_5.set(0)
+        var_desc_10.set(0)
+        lbl_total_v.config(text="Total: R$ 0.00")
+        try:
+            ent_prod_v.config(state="readonly")
+        except Exception:
+            pass
+
+    btn_limpar_venda = ttk.Button(
+        acoes_venda,
+        text="Limpar",
+        style="Secondary.TButton",
+        command=limpar_venda
+    )
+    btn_limpar_venda.pack(side="left", padx=6)
+
+    # (Opcional) Atalho: Enter finaliza a venda
+    f_v.bind_all("<Return>", lambda e: finalizar_venda())
+
     hist_v_frame = ttk.Frame(aba_vendas, padding=(8, 0))
     hist_v_frame.pack(fill="both", expand=True)
     top_hist = ttk.Frame(hist_v_frame)
@@ -1596,13 +1771,13 @@ def abrir_sistema_com_logo(username, login_win):
     lbl_hist = ttk.Label(top_hist, text="Vendas de Hoje", font=("Segoe UI", 11, "bold"))
     lbl_hist.pack(side="left", padx=6)
     ttk.Button(top_hist, text="Atualizar", command=lambda: carregar_vendas_dia()).pack(
-        side="left", padx=6
+    side="left", padx=6
     )
     ttk.Button(
-        top_hist, text="Exportar PDF", command=lambda: gerar_relatorio_vendas_dia_pdf()
+    top_hist, text="Exportar PDF", command=lambda: gerar_relatorio_vendas_dia_pdf()
     ).pack(side="left", padx=6)
     combo_filtro_pg = ttk.Combobox(
-        top_hist, values=["", "PIX", "Cartão", "Dinheiro"], width=16
+    top_hist, values=["", "PIX", "Cartão", "Dinheiro"], width=16
     )
     combo_filtro_pg.pack(side="right", padx=6)
     combo_filtro_pg.set("")
@@ -1610,24 +1785,24 @@ def abrir_sistema_com_logo(username, login_win):
     tree_vendas_frame = ttk.Frame(hist_v_frame)
     tree_vendas_frame.pack(fill="both", expand=True)
     tree_vendas = ttk.Treeview(
-        tree_vendas_frame,
-        columns=("Hora", "Cliente", "Produto", "Qtd", "Pagamento", "Total"),
-        show="headings",
-        height=10,
+    tree_vendas_frame,
+    columns=("Hora", "Cliente", "Produto", "Qtd", "Pagamento", "Total"),
+    show="headings",
+    height=10,
     )
     for col, txt, anchor, width in [
-        ("Hora", "Hora", "center", 120),
-        ("Cliente", "Cliente", "w", 200),
-        ("Produto", "Produto", "w", 240),
-        ("Qtd", "Qtd", "center", 80),
-        ("Pagamento", "Pagamento", "center", 120),
-        ("Total", "Total", "e", 120),
+    ("Hora", "Hora", "center", 120),
+    ("Cliente", "Cliente", "w", 200),
+    ("Produto", "Produto", "w", 240),
+    ("Qtd", "Qtd", "center", 80),
+    ("Pagamento", "Pagamento", "center", 120),
+    ("Total", "Total", "e", 120),
     ]:
         tree_vendas.heading(col, text=txt)
         tree_vendas.column(col, width=width, anchor=anchor)
     tree_vendas.pack(side="left", fill="both", expand=True)
     scrollbar_vendas = ttk.Scrollbar(
-        tree_vendas_frame, orient="vertical", command=tree_vendas.yview
+    tree_vendas_frame, orient="vertical", command=tree_vendas.yview
     )
     tree_vendas.configure(yscroll=scrollbar_vendas.set)
     scrollbar_vendas.pack(side="right", fill="y")
@@ -1668,6 +1843,7 @@ def abrir_sistema_com_logo(username, login_win):
                 values=(hora, cliente, produto, qtd, pagamento, f"R$ {total:.2f}"),
                 tags=(tag,),
             )
+
     combo_filtro_pg.bind("<<ComboboxSelected>>", lambda e: carregar_vendas_dia())
     # ====== CAIXA ======
     f_cx = ttk.Frame(aba_caixa, padding=8)
@@ -2299,3 +2475,6 @@ if __name__ == "__main__":
             )
         except Exception:
             pass
+
+
+# ================= ENVIO DE CUPOM POR E-MAIL ================= 
