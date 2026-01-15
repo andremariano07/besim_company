@@ -168,7 +168,7 @@ def backup_bulk_dir(local_dir: str, tipo: str):
 DISABLE_AUTO_UPDATE = DISABLE_AUTO_UPDATE = (
     False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "2.4"
+APP_VERSION = "2.5"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -1990,6 +1990,22 @@ def abrir_sistema_com_logo(username, login_win):
             )
             carregar_historico_cx()
             atualizar_caixa()
+
+    # --- Rodapé da aba Caixa: mensagem no canto inferior direito (vermelho e negrito) ---
+    try:
+        footer_cx = ttk.Frame(aba_caixa)
+        footer_cx.pack(side="bottom", fill="x")
+        ttk.Label(
+            footer_cx,
+            text="Obrigado meu Deus",
+            style="Footer.TLabel",
+            anchor="e",
+            justify="right"
+        ).pack(side="right", padx=8, pady=4)
+    except Exception:
+        pass
+    # --- Fim do rodapé da aba Caixa ---
+
     # ====== MANUTENÇÃO ======
     f_m = ttk.Frame(aba_manutencao, padding=8)
     f_m.pack(fill="x", pady=6)
@@ -2104,10 +2120,10 @@ def abrir_sistema_com_logo(username, login_win):
         ent_cpf_m.delete(0, "end")
         ent_nome_m.config(state="normal")
         ent_nome_m.delete(0, "end")
-        ent_nome_m.config(state="readonly")
+        ent_nome_m.config(state="normal")
         ent_tel_m.config(state="normal")
         ent_tel_m.delete(0, "end")
-        ent_tel_m.config(state="readonly")
+        ent_tel_m.config(state="normal")
         ent_desc_m.delete(0, "end")
         ent_valor_m.delete(0, "end")
         messagebox.showinfo("OS", "Ordem de serviço registrada!")
