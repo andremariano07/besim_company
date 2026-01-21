@@ -168,7 +168,7 @@ def backup_bulk_dir(local_dir: str, tipo: str):
 DISABLE_AUTO_UPDATE = DISABLE_AUTO_UPDATE = (
     False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "2.5"
+APP_VERSION = "2.6"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -293,27 +293,41 @@ def ensure_is_admin_column():
     except Exception:
         pass
 ensure_is_admin_column()
+
+
 def ensure_admin_user():
     try:
-        cursor.execute(
-            "SELECT username, is_admin FROM users WHERE username=?", ("admin",)
-        )
+        cursor.execute("SELECT username, is_admin, COALESCE(password_last_changed,'') FROM users WHERE username=?", ("admin",))
         r = cursor.fetchone()
+        today = datetime.datetime.now().strftime("%d/%m/%Y")
         if not r:
+            admin_hash = hash_password("admin123")
             cursor.execute(
-                "INSERT INTO users (username, password_hash, is_admin) VALUES (?,?,1)",
-                ("admin", hash_password("admin123")),
+                "INSERT INTO users (username, password_hash, is_admin, password_last_changed) VALUES (?,?,1,?)",
+                ("admin", admin_hash, today)
+            )
+            cursor.execute(
+                "INSERT OR IGNORE INTO user_password_history (username, password_hash, changed_at) VALUES (?,?,?)",
+                ("admin", admin_hash, today)
             )
             conn.commit()
         else:
             if r[1] != 1:
+                cursor.execute("UPDATE users SET is_admin=1 WHERE username=?", ("admin",))
+            if not r[2]:
+                cursor.execute("SELECT password_hash FROM users WHERE username=?", ("admin",))
+                cur_hash = cursor.fetchone()[0]
+                cursor.execute("UPDATE users SET password_last_changed=? WHERE username=?", (today, "admin"))
                 cursor.execute(
-                    "UPDATE users SET is_admin=1 WHERE username=?", ("admin",)
+                    "INSERT OR IGNORE INTO user_password_history (username, password_hash, changed_at) VALUES (?,?,?)",
+                    ("admin", cur_hash, today)
                 )
-                conn.commit()
+            conn.commit()
     except Exception:
         pass
+
 ensure_admin_user()
+
 # >>> NOVO: migração segura das colunas hora/motivo da tabela caixa (para bancos existentes)
 def ensure_caixa_columns():
     try:
@@ -331,6 +345,71 @@ def ensure_caixa_columns():
     except Exception:
         pass
 ensure_caixa_columns()
+
+
+def ensure_password_policy_tables():
+    # Tabela de histórico de senhas (uma entrada por troca)
+    cursor.execute(
+        """
+    CREATE TABLE IF NOT EXISTS user_password_history (
+        username TEXT,
+        password_hash TEXT,
+        changed_at TEXT,
+        PRIMARY KEY (username, changed_at)
+    )
+    """
+    )
+    # Adiciona coluna 'password_last_changed' na tabela users, se ainda não existir
+    cursor.execute("PRAGMA table_info(users)")
+    cols = [c[1] for c in cursor.fetchall()]
+    if "password_last_changed" not in cols:
+        cursor.execute("ALTER TABLE users ADD COLUMN password_last_changed TEXT")
+        conn.commit()
+
+ensure_password_policy_tables()
+
+# Utilitários de política de senha (30 dias + últimas 3)
+def _parse_br_date(d: str):
+    try:
+        return datetime.datetime.strptime(d, "%d/%m/%Y").date()
+    except Exception:
+        return None
+
+def days_since_last_change(username: str) -> int:
+    try:
+        cursor.execute("SELECT password_last_changed FROM users WHERE username=?", (username,))
+        d = cursor.fetchone()
+        if not d or not d[0]:
+            return 9999
+        dt = _parse_br_date(d[0])
+        if not dt:
+            return 9999
+        return (datetime.date.today() - dt).days
+    except Exception:
+        return 9999
+
+def get_last_password_hashes(username: str, n: int = 3):
+    cursor.execute(
+        "SELECT password_hash FROM user_password_history WHERE username=? ORDER BY date(substr(changed_at,7,4)||'-'||substr(changed_at,4,2)||'-'||substr(changed_at,1,2)) DESC",
+        (username,)
+    )
+    rows = cursor.fetchall()
+    return [r[0] for r in rows[:n]]
+
+def password_reuse_forbidden(username: str, new_hash: str, n: int = 3) -> bool:
+    return new_hash in get_last_password_hashes(username, n)
+
+def set_new_password(username: str, new_plain: str):
+    new_hash = hash_password(new_plain)
+    if password_reuse_forbidden(username, new_hash, 3):
+        raise ValueError("A nova senha não pode repetir nenhuma das últimas 3 senhas.")
+    today = datetime.datetime.now().strftime("%d/%m/%Y")
+    with conn:
+        cursor.execute("UPDATE users SET password_hash=?, password_last_changed=? WHERE username=?", (new_hash, today, username))
+        cursor.execute(
+            "INSERT OR REPLACE INTO user_password_history (username, password_hash, changed_at) VALUES (?,?,?)",
+            (username, new_hash, today)
+        )
 def is_admin(username: str) -> bool:
     try:
         cursor.execute("SELECT is_admin FROM users WHERE username=?", (username,))
@@ -458,6 +537,85 @@ class SplashScreen(tk.Toplevel):
         except Exception:
             pass
 # ===================== UPDATE (após login, corrigido: sem loop) =====================
+
+# >>> Diálogo modal de alteração de senha e atalhos de tela cheia
+class ChangePasswordDialog(tk.Toplevel):
+    def __init__(self, master, username: str, must_change: bool = False):
+        super().__init__(master)
+        self.title("Alterar Senha")
+        self.resizable(False, False)
+        self.username = username
+        self.must_change = must_change
+        self.result = False
+        self.grab_set()
+        self.transient(master)
+        frm = ttk.Frame(self, padding=12)
+        frm.pack(fill="both", expand=True)
+        msg = "Sua senha expirou. Defina uma nova senha." if must_change else "Defina a nova senha."
+        ttk.Label(frm, text=msg).pack(anchor="w", pady=(0,8))
+        ttk.Label(frm, text="Nova senha").pack(anchor="w")
+        self.ent_new = ttk.Entry(frm, show="*")
+        self.ent_new.pack(fill="x", pady=4)
+        ttk.Label(frm, text="Confirmar nova senha").pack(anchor="w")
+        self.ent_conf = ttk.Entry(frm, show="*")
+        self.ent_conf.pack(fill="x", pady=4)
+        ttk.Label(frm, text="Não é permitido reutilizar as últimas 3 senhas.").pack(anchor="w", pady=(6,2))
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x", pady=8)
+        ttk.Button(btns, text="Cancelar", command=self._cancel).pack(side="right", padx=6)
+        ttk.Button(btns, text="Salvar", style="Success.TButton", command=self._save).pack(side="right", padx=6)
+        self.bind("<Return>", lambda e: self._save())
+        if must_change:
+            self.protocol("WM_DELETE_WINDOW", lambda: None)
+        else:
+            self.protocol("WM_DELETE_WINDOW", self._cancel)
+    def _save(self):
+        new = (self.ent_new.get() or "").strip()
+        conf = (self.ent_conf.get() or "").strip()
+        if len(new) < 6:
+            messagebox.showwarning("Atenção", "A senha deve ter pelo menos 6 caracteres.")
+            return
+        if new != conf:
+            messagebox.showerror("Erro", "As senhas digitadas não conferem.")
+            return
+        try:
+            set_new_password(self.username, new)
+            messagebox.showinfo("OK", "Senha alterada com sucesso!")
+            self.result = True
+            self.destroy()
+        except ValueError as ve:
+            messagebox.showerror("Erro", str(ve))
+        except Exception as ex:
+            messagebox.showerror("Erro", f"Falha ao alterar a senha\n{ex}")
+    def _cancel(self):
+        self.result = False
+        self.destroy()
+
+# Helper para alternar tela cheia (F11) e sair (Esc)
+def _bind_fullscreen_shortcuts(win: tk.Misc):
+    if not hasattr(win, "_is_fullscreen"):
+        win._is_fullscreen = False
+    def _toggle_fullscreen(evt=None):
+        try:
+            win._is_fullscreen = not getattr(win, "_is_fullscreen", False)
+            win.attributes("-fullscreen", win._is_fullscreen)
+        except Exception:
+            try:
+                win.state("zoomed" if win._is_fullscreen else "normal")
+            except Exception:
+                pass
+    def _exit_fullscreen(evt=None):
+        try:
+            win._is_fullscreen = False
+            win.attributes("-fullscreen", False)
+        except Exception:
+            try:
+                win.state("normal")
+            except Exception:
+                pass
+    win.bind("<F11>", _toggle_fullscreen)
+    win.bind("<Escape>", _exit_fullscreen)
+
 def get_local_version() -> str:
     """Lê a versão local a partir do arquivo VERSION, se existir; senão usa APP_VERSION."""
     try:
@@ -921,6 +1079,7 @@ def abrir_sistema_com_logo(username, login_win):
     root.focus_force()
     root.attributes("-topmost", True)
     root.after(200, lambda: root.attributes("-topmost", False))
+    _bind_fullscreen_shortcuts(root)
     setup_global_exception_handlers(root)
     # Executa atualização após login (se houver)
     try:
@@ -977,6 +1136,12 @@ def abrir_sistema_com_logo(username, login_win):
     def do_quit():
         closing_state["mode"] = None
         on_close()
+
+    def alterar_senha():
+        dlg = ChangePasswordDialog(root, username, must_change=False)
+        root.wait_window(dlg)
+
+    menu_sessao.add_command(label="Alterar senha…", command=alterar_senha)
     menu_sessao.add_command(label="Logout", accelerator="Ctrl+L", command=do_logout)
     menu_sessao.add_separator()
     menu_sessao.add_command(label="Sair", accelerator="Ctrl+Q", command=do_quit)
@@ -2380,6 +2545,7 @@ def abrir_login():
     login_win.geometry("420x300")
     login_win.resizable(False, False)
     setup_global_exception_handlers(login_win)
+    _bind_fullscreen_shortcuts(login_win)
     style = ttk.Style()
     try:
         style.theme_use("clam")
@@ -2412,6 +2578,7 @@ def abrir_login():
     ent_pass.pack(fill="x", pady=4)
     login_win.ent_user = ent_user
     login_win.ent_pass = ent_pass
+
     def tentar_login():
         user = ent_user.get().strip()
         pw = ent_pass.get().strip()
@@ -2424,16 +2591,26 @@ def abrir_login():
             messagebox.showerror("Erro", "Usuário não encontrado")
             return
         if hash_password(pw) == r[0]:
+            must_change = False
+            try:
+                if is_admin(user) and days_since_last_change(user) >= 30:
+                    must_change = True
+            except Exception:
+                must_change = True
+            if must_change:
+                dlg = ChangePasswordDialog(login_win, user, must_change=True)
+                login_win.wait_window(dlg)
+                if not dlg.result:
+                    return
             login_win.withdraw()
             try:
                 abrir_sistema_com_logo(user, login_win)
             except Exception as ex:
-                messagebox.showerror(
-                    "Erro fatal", f"Falha ao abrir a janela principal:\n{ex}"
-                )
+                messagebox.showerror("Erro fatal", f"Falha ao abrir a janela principal\n\n{ex}")
                 login_win.deiconify()
         else:
             messagebox.showerror("Erro", "Senha incorreta")
+
     def criar_usuario():
         user = ent_user.get().strip()
         pw = ent_pass.get().strip()
@@ -2441,10 +2618,23 @@ def abrir_login():
             messagebox.showwarning("Atenção", "Informe usuário e senha para criar")
             return
         try:
+            today = datetime.datetime.now().strftime("%d/%m/%Y")
             with conn:
+                cursor.execute("PRAGMA table_info(users)")
+                cols = [c[1] for c in cursor.fetchall()]
+                if 'password_last_changed' in cols:
+                    cursor.execute(
+                        "INSERT INTO users(username, password_hash, is_admin, password_last_changed) VALUES (?,?,0,?)",
+                        (user, hash_password(pw), today)
+                    )
+                else:
+                    cursor.execute(
+                        "INSERT INTO users(username, password_hash, is_admin) VALUES (?,?,0)",
+                        (user, hash_password(pw))
+                    )
                 cursor.execute(
-                    "INSERT INTO users(username,password_hash,is_admin) VALUES (?,?,0)",
-                    (user, hash_password(pw)),
+                    "INSERT OR IGNORE INTO user_password_history (username, password_hash, changed_at) VALUES (?,?,?)",
+                    (user, hash_password(pw), today)
                 )
             messagebox.showinfo("OK", "Usuário criado com sucesso")
         except sqlite3.IntegrityError:
