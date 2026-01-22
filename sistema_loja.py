@@ -169,7 +169,7 @@ def backup_bulk_dir(local_dir: str, tipo: str):
 DISABLE_AUTO_UPDATE = DISABLE_AUTO_UPDATE = (
     False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "2.9"
+APP_VERSION = "3.0"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -549,6 +549,71 @@ class SplashScreen(tk.Toplevel):
             self.update_idletasks()
         except Exception:
             pass
+
+
+def show_goodbye_screen(master, message="Até Logo,\nBom descanso", duration_ms=1500):
+    """Mostra uma tela rápida de despedida com logo (se existir) e mensagem."""
+    try:
+        win = tk.Toplevel(master)
+        win.overrideredirect(True)
+        win.configure(bg="#1e1e1e")
+
+        w, h = 520, 260
+        try:
+            win.update_idletasks()
+            x = (win.winfo_screenwidth() // 2) - (w // 2)
+            y = (win.winfo_screenheight() // 2) - (h // 2)
+            win.geometry(f"{w}x{h}+{x}+{y}")
+        except Exception:
+            win.geometry(f"{w}x{h}")
+
+        try:
+            win.attributes("-topmost", True)
+            win.lift()
+            win.focus_force()
+        except Exception:
+            pass
+
+        frame = tk.Frame(win, bg="#1e1e1e")
+        frame.pack(expand=True, fill="both")
+
+        logo_path = os.path.join(os.getcwd(), "logo.png")
+        if os.path.exists(logo_path):
+            try:
+                img = Image.open(logo_path).resize((240, 80))
+                win._goodbye_logo = ImageTk.PhotoImage(img)
+                tk.Label(frame, image=win._goodbye_logo, bg="#1e1e1e").pack(pady=(35, 18))
+            except Exception:
+                tk.Label(
+                    frame,
+                    text="BESIM COMPANY",
+                    fg="white",
+                    bg="#1e1e1e",
+                    font=("Segoe UI", 20, "bold"),
+                ).pack(pady=(55, 18))
+        else:
+            tk.Label(
+                frame,
+                text="BESIM COMPANY",
+                fg="white",
+                bg="#1e1e1e",
+                font=("Segoe UI", 20, "bold"),
+            ).pack(pady=(55, 18))
+
+        tk.Label(
+            frame,
+            text=message,
+            fg="#9cdcfe",
+            bg="#1e1e1e",
+            font=("Segoe UI", 14, "bold"),
+            justify="center",
+            anchor="center",
+        ).pack(pady=(0, 10))
+
+        win.after(duration_ms, win.destroy)
+        return win
+    except Exception:
+        return None
 # ===================== UPDATE (após login, corrigido: sem loop) =====================
 
 # >>> Diálogo modal de alteração de senha e atalhos de tela cheia
@@ -1102,7 +1167,9 @@ def abrir_sistema_com_logo(username, login_win):
     except Exception:
         pass
     closing_state = {"mode": None}
+
     def on_close():
+        # 1) Logout: volta para o login sem mensagem de despedida
         if closing_state.get("mode") == "logout":
             try:
                 root.destroy()
@@ -1121,23 +1188,35 @@ def abrir_sistema_com_logo(username, login_win):
                 pass
             closing_state["mode"] = None
             return
+
+        # 2) Encerrar o programa: mostra despedida (duas linhas)
         if messagebox.askyesno("Sair", "Tem certeza que deseja encerrar o sistema?"):
             try:
-                if login_win and login_win.winfo_exists():
-                    login_win.destroy()
+                show_goodbye_screen(root, "Até Logo,\nBom descanso", duration_ms=1500)
             except Exception:
                 pass
-            try:
-                root.destroy()
-            except Exception:
-                pass
-            try:
-                conn.close()
-            except Exception:
-                pass
-        else:
+
+            def _finalizar_saida():
+                try:
+                    if login_win and login_win.winfo_exists():
+                        login_win.destroy()
+                except Exception:
+                    pass
+                try:
+                    root.destroy()
+                except Exception:
+                    pass
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+            root.after(1600, _finalizar_saida)
             return
+        return
+
     root.protocol("WM_DELETE_WINDOW", on_close)
+
     menu_bar = tk.Menu(root)
     menu_sessao = tk.Menu(menu_bar, tearoff=0)
     def do_logout():
@@ -3072,16 +3151,30 @@ def abrir_login():
         anchor="center",
         justify="center",
     ).pack(side="bottom", fill="x", pady=(0, 8))
+
     def on_close_login():
         if messagebox.askyesno("Sair", "Deseja encerrar o sistema?"):
             try:
-                conn.close()
+                show_goodbye_screen(login_win, "Até Logo,\nBom descanso", duration_ms=1500)
             except Exception:
                 pass
-            login_win.destroy()
-        else:
+
+            def _finalizar_saida():
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                try:
+                    login_win.destroy()
+                except Exception:
+                    pass
+
+            login_win.after(1600, _finalizar_saida)
             return
+        return
+
     login_win.protocol("WM_DELETE_WINDOW", on_close_login)
+
     login_win.mainloop()
 # ===================== MAIN =====================
 if __name__ == "__main__":
