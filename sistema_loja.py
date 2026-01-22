@@ -15,10 +15,11 @@ Garantias:
 - Melhoria: janela volta para frente após abrir PDF (bring_app_to_front)
 """
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 from PIL import Image, ImageTk
 import sqlite3
 import datetime
+import calendar
 import os
 import sys
 import hashlib
@@ -168,7 +169,7 @@ def backup_bulk_dir(local_dir: str, tipo: str):
 DISABLE_AUTO_UPDATE = DISABLE_AUTO_UPDATE = (
     False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "2.7"
+APP_VERSION = "2.8"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -280,6 +281,18 @@ CREATE TABLE IF NOT EXISTS devolucoes (
 """
 )
 conn.commit()
+# >>> NOVO: agendamento de retirada de celulares
+cursor.execute(
+    """
+CREATE TABLE IF NOT EXISTS agendamentos_celulares (
+    data_iso TEXT PRIMARY KEY,
+    responsavel TEXT,
+    atualizado_em TEXT
+)
+"""
+)
+conn.commit()
+
 # ====== UTIL: hash de senha / migrações ======
 def hash_password(pw: str) -> str:
     return hashlib.sha256(pw.encode("utf-8")).hexdigest()
@@ -1239,6 +1252,9 @@ def abrir_sistema_com_logo(username, login_win):
     abas.add(aba_manutencao, text="Manutenção")
     abas.add(aba_devolucao, text="Devolução")
 
+    aba_agendamento = ttk.Frame(abas, padding=10)
+    abas.add(aba_agendamento, text="Agendamento")
+
     # Atualiza automaticamente a aba Vendas quando ela for selecionada
     def _on_tab_changed(event=None):
         try:
@@ -1422,7 +1438,209 @@ def abrir_sistema_com_logo(username, login_win):
         cursor.execute("SELECT hora, cliente, produto, pagamento, total FROM vendas WHERE data=? AND pagamento LIKE 'Upgrade%' ORDER BY hora DESC", (hoje,))
         for hora, cliente, produto, pagamento, total in cursor.fetchall():
             tree_upgrades.insert("", "end", values=(hora, cliente, produto, (pagamento or "").replace("Upgrade - ", ""), f"R$ {total:.2f}"))
-    # ====== ESTOQUE ======
+    
+    # ====== AGENDAMENTO (retirada de celulares) ======
+    # UI: AGENDAMENTO
+    ag_state = {"year": datetime.date.today().year, "month": datetime.date.today().month}
+
+    # Cabeçalho com navegação
+    ag_top = ttk.Frame(aba_agendamento, padding=8)
+    ag_top.pack(fill="x")
+
+    btn_prev = ttk.Button(ag_top, text="◀", width=4)
+    btn_prev.pack(side="left", padx=(0, 6))
+
+    lbl_mes = ttk.Label(ag_top, text="", font=("Segoe UI", 12, "bold"))
+    lbl_mes.pack(side="left", padx=6)
+
+    btn_next = ttk.Button(ag_top, text="▶", width=4)
+    btn_next.pack(side="left", padx=6)
+
+    def _go_today():
+        ag_state["year"] = datetime.date.today().year
+        ag_state["month"] = datetime.date.today().month
+        refresh_agendamento_calendar()
+
+    ttk.Button(ag_top, text="Hoje", style="Secondary.TButton", command=_go_today).pack(side="right", padx=6)
+
+    # Grade do calendário
+    ag_cal_frame = ttk.Frame(aba_agendamento, padding=(8, 4))
+    ag_cal_frame.pack(fill="both", expand=True)
+
+    # Linha com nomes dos dias (Seg a Dom)
+    dias_semana = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
+    for i, d in enumerate(dias_semana):
+        ttk.Label(ag_cal_frame, text=d, anchor="center", font=("Segoe UI", 10, "bold")).grid(row=0, column=i, sticky="nsew", padx=2, pady=(0, 4))
+        ag_cal_frame.grid_columnconfigure(i, weight=1)
+
+    # Container dos botões de dias
+    ag_days_container = ttk.Frame(ag_cal_frame)
+    ag_days_container.grid(row=1, column=0, columnspan=7, sticky="nsew")
+    for i in range(7):
+        ag_days_container.grid_columnconfigure(i, weight=1)
+
+    # Lista (resumo) de agendamentos do mês
+    ag_list_frame = ttk.Frame(aba_agendamento, padding=(8, 6))
+    ag_list_frame.pack(fill="both", expand=False)
+
+    ttk.Label(ag_list_frame, text="Agendamentos do mês", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=2, pady=(0, 6))
+
+    ag_tree = ttk.Treeview(ag_list_frame, columns=("Data", "Responsável"), show="headings", height=6)
+    ag_tree.heading("Data", text="Data")
+    ag_tree.heading("Responsável", text="Responsável")
+    ag_tree.column("Data", width=120, anchor="center")
+    ag_tree.column("Responsável", width=420, anchor="w")
+    ag_tree.pack(side="left", fill="both", expand=True)
+    ag_scroll = ttk.Scrollbar(ag_list_frame, orient="vertical", command=ag_tree.yview)
+    ag_tree.configure(yscroll=ag_scroll.set)
+    ag_scroll.pack(side="right", fill="y")
+
+    def _mes_ano_pt(year: int, month: int) -> str:
+        # Nomes em pt-BR
+        nomes = [
+            "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+            "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+        ]
+        try:
+            return f"{nomes[month-1]} {year}"
+        except Exception:
+            return f"{month:02d}/{year}"
+
+    def _iso_date(year: int, month: int, day: int) -> str:
+        return f"{year:04d}-{month:02d}-{day:02d}"
+
+    def _br_date_from_iso(iso: str) -> str:
+        try:
+            y, m, d = iso.split('-')
+            return f"{d}/{m}/{y}"
+        except Exception:
+            return iso
+
+    def _load_agendamentos_do_mes(year: int, month: int):
+        # Retorna dict {dia: responsavel}
+        resp = {}
+        ym = f"{year:04d}-{month:02d}"
+        try:
+            cursor.execute("SELECT data_iso, responsavel FROM agendamentos_celulares WHERE substr(data_iso,1,7)=?", (ym,))
+            for iso, r in cursor.fetchall():
+                try:
+                    dia = int(iso.split('-')[2])
+                    resp[dia] = r or ""
+                except Exception:
+                    pass
+        except Exception as ex:
+            logging.error(f"Falha ao carregar agendamentos: {ex}", exc_info=True)
+        return resp
+
+    def _refresh_agendamento_lista(year: int, month: int):
+        ag_tree.delete(*ag_tree.get_children())
+        ym = f"{year:04d}-{month:02d}"
+        try:
+            cursor.execute("SELECT data_iso, responsavel FROM agendamentos_celulares WHERE substr(data_iso,1,7)=? ORDER BY data_iso", (ym,))
+            for iso, r in cursor.fetchall():
+                ag_tree.insert("", "end", values=(_br_date_from_iso(iso), r or ""))
+        except Exception as ex:
+            logging.error(f"Falha ao atualizar lista de agendamentos: {ex}", exc_info=True)
+
+    def _open_agendamento_dialog(day: int):
+        year = ag_state["year"]
+        month = ag_state["month"]
+        iso = _iso_date(year, month, day)
+        # Valor atual (se existir)
+        atual = ""
+        try:
+            cursor.execute("SELECT responsavel FROM agendamentos_celulares WHERE data_iso=?", (iso,))
+            rr = cursor.fetchone()
+            if rr and rr[0]:
+                atual = rr[0]
+        except Exception:
+            pass
+
+        titulo = "Agendamento - Retirada de Celulares"
+        prompt = f"Quem vai buscar os celulares em {_br_date_from_iso(iso)}?\n\n(Deixe em branco para remover o agendamento.)"
+        nome = simpledialog.askstring(titulo, prompt, initialvalue=atual, parent=root)
+        if nome is None:
+            return  # cancelado
+        nome = (nome or "").strip()
+        try:
+            with conn:
+                if nome:
+                    agora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                    cursor.execute(
+                        "INSERT INTO agendamentos_celulares(data_iso, responsavel, atualizado_em) VALUES (?,?,?)"
+                        " ON CONFLICT(data_iso) DO UPDATE SET responsavel=excluded.responsavel, atualizado_em=excluded.atualizado_em",
+                        (iso, nome, agora),
+                    )
+                else:
+                    cursor.execute("DELETE FROM agendamentos_celulares WHERE data_iso=?", (iso,))
+        except Exception as ex:
+            logging.error(f"Falha ao salvar agendamento: {ex}", exc_info=True)
+            messagebox.showerror("Erro", f"Não foi possível salvar o agendamento.\n{ex}")
+            return
+
+        refresh_agendamento_calendar()
+
+    def refresh_agendamento_calendar():
+        year = ag_state["year"]
+        month = ag_state["month"]
+
+        lbl_mes.config(text=_mes_ano_pt(year, month))
+
+        # Limpa botões existentes
+        for w in ag_days_container.winfo_children():
+            try:
+                w.destroy()
+            except Exception:
+                pass
+
+        # Carrega agendamentos do mês
+        ag_map = _load_agendamentos_do_mes(year, month)
+
+        cal = calendar.Calendar(firstweekday=0)  # 0=Segunda
+        weeks = cal.monthdayscalendar(year, month)
+
+        # Grid 6 linhas no máximo
+        for r, week in enumerate(weeks):
+            for c, day in enumerate(week):
+                if day == 0:
+                    # célula vazia
+                    ttk.Label(ag_days_container, text="").grid(row=r, column=c, sticky="nsew", padx=2, pady=2)
+                    continue
+
+                resp = ag_map.get(day, "")
+                # Texto do botão: dia + indicador
+                if resp:
+                    txt = f"{day}\n✓"
+                    style_btn = "Accent.TButton"
+                else:
+                    txt = str(day)
+                    style_btn = "TButton"
+
+                b = ttk.Button(ag_days_container, text=txt, command=lambda d=day: _open_agendamento_dialog(d), style=style_btn)
+                b.grid(row=r, column=c, sticky="nsew", padx=2, pady=2, ipadx=2, ipady=6)
+
+        _refresh_agendamento_lista(year, month)
+
+    def _change_month(delta: int):
+        y = ag_state["year"]
+        m = ag_state["month"] + delta
+        if m < 1:
+            m = 12
+            y -= 1
+        elif m > 12:
+            m = 1
+            y += 1
+        ag_state["year"] = y
+        ag_state["month"] = m
+        refresh_agendamento_calendar()
+
+    btn_prev.config(command=lambda: _change_month(-1))
+    btn_next.config(command=lambda: _change_month(1))
+
+    # Carrega ao iniciar
+    refresh_agendamento_calendar()
+
+# ====== ESTOQUE ======
     est_top = ttk.Frame(aba_estoque)
     est_top.pack(fill="both", expand=True)
     tree_frame = ttk.Frame(est_top)
@@ -2691,4 +2909,99 @@ def abrir_login():
         cursor.execute("SELECT password_hash FROM users WHERE username=?", (user,))
         r = cursor.fetchone()
         if not r:
-            messagebox.showe
+            messagebox.showerror("Erro", "Usuário não encontrado")
+            return
+        if hash_password(pw) == r[0]:
+            must_change = False
+            try:
+                if is_admin(user) and days_since_last_change(user) >= 30:
+                    must_change = True
+            except Exception:
+                must_change = True
+            if must_change:
+                dlg = ChangePasswordDialog(login_win, user, must_change=True)
+                login_win.wait_window(dlg)
+                if not dlg.result:
+                    return
+            login_win.withdraw()
+            try:
+                abrir_sistema_com_logo(user, login_win)
+            except Exception as ex:
+                messagebox.showerror("Erro fatal", f"Falha ao abrir a janela principal\n\n{ex}")
+                login_win.deiconify()
+        else:
+            messagebox.showerror("Erro", "Senha incorreta")
+
+    def criar_usuario():
+        user = ent_user.get().strip()
+        pw = ent_pass.get().strip()
+        if not user or not pw:
+            messagebox.showwarning("Atenção", "Informe usuário e senha para criar")
+            return
+        try:
+            today = datetime.datetime.now().strftime("%d/%m/%Y")
+            with conn:
+                cursor.execute("PRAGMA table_info(users)")
+                cols = [c[1] for c in cursor.fetchall()]
+                if 'password_last_changed' in cols:
+                    cursor.execute(
+                        "INSERT INTO users(username, password_hash, is_admin, password_last_changed) VALUES (?,?,0,?)",
+                        (user, hash_password(pw), today)
+                    )
+                else:
+                    cursor.execute(
+                        "INSERT INTO users(username, password_hash, is_admin) VALUES (?,?,0)",
+                        (user, hash_password(pw))
+                    )
+                cursor.execute(
+                    "INSERT OR IGNORE INTO user_password_history (username, password_hash, changed_at) VALUES (?,?,?)",
+                    (user, hash_password(pw), today)
+                )
+            messagebox.showinfo("OK", "Usuário criado com sucesso")
+        except sqlite3.IntegrityError:
+            messagebox.showerror("Erro", "Usuário já existe")
+    btn_frame = ttk.Frame(frm)
+    btn_frame.pack(fill="x", pady=12)
+    ttk.Button(btn_frame, text="Entrar", command=tentar_login).pack(
+        side="left", expand=True, padx=6
+    )
+    ttk.Button(btn_frame, text="Criar Usuário", command=criar_usuario).pack(
+        side="left", expand=True, padx=6
+    )
+    ttk.Separator(login_win, orient="horizontal").pack(
+        fill="x", padx=8, pady=(4, 2), side="bottom"
+    )
+    footer_text = f"Developed by André Mariano (v{get_local_version()})\n\nBeta Test"
+    ttk.Label(
+        login_win,
+        text=footer_text,
+        style="Footer.TLabel",
+        anchor="center",
+        justify="center",
+    ).pack(side="bottom", fill="x", pady=(0, 8))
+    def on_close_login():
+        if messagebox.askyesno("Sair", "Deseja encerrar o sistema?"):
+            try:
+                conn.close()
+            except Exception:
+                pass
+            login_win.destroy()
+        else:
+            return
+    login_win.protocol("WM_DELETE_WINDOW", on_close_login)
+    login_win.mainloop()
+# ===================== MAIN =====================
+if __name__ == "__main__":
+    try:
+        abrir_login()
+    except Exception:
+        logging.error("Erro ao iniciar a aplicação", exc_info=True)
+        try:
+            messagebox.showerror(
+                "Erro", "Falha ao iniciar a aplicação. Consulte o arquivo de logs."
+            )
+        except Exception:
+            pass
+
+
+# ================= ENVIO DE CUPOM POR E-MAIL ================= 
