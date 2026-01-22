@@ -1931,59 +1931,153 @@ def abrir_sistema_com_logo(username, login_win):
 
     hist_v_frame = ttk.Frame(aba_vendas, padding=(8, 0))
     hist_v_frame.pack(fill="both", expand=True)
+
     top_hist = ttk.Frame(hist_v_frame)
     top_hist.pack(fill="x", pady=(6, 6))
+
     lbl_hist = ttk.Label(top_hist, text="Vendas de Hoje", font=("Segoe UI", 11, "bold"))
     lbl_hist.pack(side="left", padx=6)
-    ttk.Button(top_hist, text="Atualizar", command=lambda: carregar_vendas_dia()).pack(
-    side="left", padx=6
-    )
-    ttk.Button(
-    top_hist, text="Exportar PDF", command=lambda: gerar_relatorio_vendas_dia_pdf()
-    ).pack(side="left", padx=6)
-    combo_filtro_pg = ttk.Combobox(
-    top_hist, values=["", "PIX", "Cartão", "Dinheiro"], width=16
-    )
+
+    ttk.Button(top_hist, text="Atualizar", command=lambda: carregar_vendas_dia()).pack(side="left", padx=6)
+    ttk.Button(top_hist, text="📄 Exportar PDF", style="Accent.TButton", command=lambda: gerar_relatorio_vendas_dia_pdf()).pack(side="left", padx=6)
+
+    # Botão: Excluir Venda (estorna do caixa)
+    ttk.Button(top_hist, text="✖ Excluir Venda", style="Danger.TButton", command=lambda: excluir_venda()).pack(side="left", padx=6)
+
+    combo_filtro_pg = ttk.Combobox(top_hist, values=["", "PIX", "Cartão", "Dinheiro"], width=16)
     combo_filtro_pg.pack(side="right", padx=6)
     combo_filtro_pg.set("")
     ttk.Label(top_hist, text="Filtrar por pagamento:").pack(side="right")
+
     tree_vendas_frame = ttk.Frame(hist_v_frame)
     tree_vendas_frame.pack(fill="both", expand=True)
+
     tree_vendas = ttk.Treeview(
-    tree_vendas_frame,
-    columns=("Hora", "Cliente", "Produto", "Qtd", "Pagamento", "Total"),
-    show="headings",
-    height=10,
+        tree_vendas_frame,
+        columns=("Hora", "Cliente", "Produto", "Qtd", "Pagamento", "Total"),
+        show="headings",
+        height=10,
     )
+
     for col, txt, anchor, width in [
-    ("Hora", "Hora", "center", 120),
-    ("Cliente", "Cliente", "w", 200),
-    ("Produto", "Produto", "w", 240),
-    ("Qtd", "Qtd", "center", 80),
-    ("Pagamento", "Pagamento", "center", 120),
-    ("Total", "Total", "e", 120),
+        ("Hora", "Hora", "center", 120),
+        ("Cliente", "Cliente", "w", 200),
+        ("Produto", "Produto", "w", 240),
+        ("Qtd", "Qtd", "center", 80),
+        ("Pagamento", "Pagamento", "center", 120),
+        ("Total", "Total", "e", 120),
     ]:
         tree_vendas.heading(col, text=txt)
         tree_vendas.column(col, width=width, anchor=anchor)
+
     tree_vendas.pack(side="left", fill="both", expand=True)
-    scrollbar_vendas = ttk.Scrollbar(
-    tree_vendas_frame, orient="vertical", command=tree_vendas.yview
-    )
+    scrollbar_vendas = ttk.Scrollbar(tree_vendas_frame, orient="vertical", command=tree_vendas.yview)
     tree_vendas.configure(yscroll=scrollbar_vendas.set)
     scrollbar_vendas.pack(side="right", fill="y")
+
     # >>> Ajuste de contraste nas tags de vendas
-    tree_vendas.tag_configure("PIX",      background="#e6ffed", foreground="black")
-    tree_vendas.tag_configure("Cartão",   background="#e6f0ff", foreground="black")
+    tree_vendas.tag_configure("PIX", background="#e6ffed", foreground="black")
+    tree_vendas.tag_configure("Cartão", background="#e6f0ff", foreground="black")
     tree_vendas.tag_configure("Dinheiro", background="#fff5e6", foreground="black")
-    tree_vendas.tag_configure("default",  background="white",    foreground="black")
+    tree_vendas.tag_configure("default", background="white", foreground="black")
+
+    def excluir_venda():
+        """Exclui a venda selecionada na lista do dia e estorna o valor no caixa."""
+        sel = tree_vendas.selection()
+        if not sel:
+            messagebox.showwarning("Atenção", "Selecione uma venda na lista para excluir.")
+            return
+
+        vid = sel[0]
+        try:
+            cursor.execute(
+                "SELECT id, produto, quantidade, total, data, pagamento, cliente, hora FROM vendas WHERE id=?",
+                (vid,),
+            )
+            r = cursor.fetchone()
+            if not r:
+                messagebox.showerror("Erro", "Venda não encontrada no banco de dados.")
+                return
+
+            _id, produto, qtd, total, data_v, pagamento, cliente_v, hora_v = r
+
+            # Se o caixa do dia já foi fechado, bloquear para evitar inconsistência
+            cursor.execute("SELECT total FROM fechamento_caixa WHERE data=?", (data_v,))
+            if cursor.fetchone():
+                messagebox.showwarning(
+                    "Caixa já fechado",
+                    f"O caixa do dia {data_v} já foi fechado.\n\nPara manter consistência, não é permitido excluir vendas após o fechamento.",
+                )
+                return
+
+            msg = (
+                "Deseja excluir esta venda?\n\n"
+                f"ID: {_id}\n"
+                f"Cliente: {cliente_v}\n"
+                f"Produto: {produto}\n"
+                f"Qtd: {qtd}\n"
+                f"Pagamento: {pagamento}\n"
+                f"Total: R$ {float(total):.2f}\n"
+                f"Hora: {hora_v}"
+            )
+
+            if not messagebox.askyesno("Excluir Venda", msg):
+                return
+
+            hora_now = datetime.datetime.now().strftime("%H:%M:%S")
+
+            with conn:
+                # Remove a venda
+                cursor.execute("DELETE FROM vendas WHERE id=?", (_id,))
+
+                # Devolve estoque se for um produto cadastrado (por nome)
+                try:
+                    cursor.execute(
+                        "UPDATE produtos SET estoque = COALESCE(estoque,0) + ? WHERE nome=?",
+                        (int(qtd), str(produto)),
+                    )
+                except Exception:
+                    pass
+
+                # Estorna no caixa (lançamento negativo com motivo)
+                try:
+                    cursor.execute(
+                        "INSERT INTO caixa(valor,data,hora,motivo) VALUES (?,?,?,?)",
+                        (-float(total), data_v, hora_now, f"Estorno - exclusão venda ID {_id}"),
+                    )
+                except Exception:
+                    # Compatibilidade caso algum banco antigo não tenha motivo/hora
+                    cursor.execute("INSERT INTO caixa(valor,data) VALUES (?,?)", (-float(total), data_v))
+
+            # Atualiza telas
+            try:
+                listar_estoque()
+            except Exception:
+                pass
+            try:
+                carregar_vendas_dia()
+            except Exception:
+                pass
+            try:
+                atualizar_caixa()
+            except Exception:
+                pass
+
+            messagebox.showinfo("OK", "Venda excluída e valor estornado do caixa.")
+
+        except Exception as ex:
+            logging.error("Falha ao excluir venda", exc_info=True)
+            messagebox.showerror("Erro", f"Falha ao excluir venda\n{ex}")
+
     def carregar_vendas_dia():
         tree_vendas.delete(*tree_vendas.get_children())
         hoje = datetime.datetime.now().strftime("%d/%m/%Y")
-        filtro = combo_filtro_pg.get().strip()
+        filtro = (combo_filtro_pg.get() or "").strip()
+
         if filtro:
             cursor.execute(
                 """
-                SELECT hora, cliente, produto, quantidade, pagamento, total
+                SELECT id, hora, cliente, produto, quantidade, pagamento, total
                 FROM vendas
                 WHERE data=? AND pagamento=?
                 ORDER BY hora DESC
@@ -1993,24 +2087,33 @@ def abrir_sistema_com_logo(username, login_win):
         else:
             cursor.execute(
                 """
-                SELECT hora, cliente, produto, quantidade, pagamento, total
+                SELECT id, hora, cliente, produto, quantidade, pagamento, total
                 FROM vendas
                 WHERE data=?
                 ORDER BY hora DESC
                 """,
                 (hoje,),
             )
-        for hora, cliente, produto, qtd, pagamento, total in cursor.fetchall():
+
+        for vid, hora, cliente, produto, qtd, pagamento, total in cursor.fetchall():
             tag = pagamento if pagamento in ("PIX", "Cartão", "Dinheiro") else "default"
             tree_vendas.insert(
                 "",
                 "end",
-                values=(hora, cliente, produto, qtd, pagamento, f"R$ {total:.2f}"),
+                iid=str(vid),
+                values=(hora, cliente, produto, qtd, pagamento, f"R$ {float(total):.2f}"),
                 tags=(tag,),
             )
 
     combo_filtro_pg.bind("<<ComboboxSelected>>", lambda e: carregar_vendas_dia())
-    # ====== CAIXA ======
+
+    # Carrega vendas ao abrir a aba
+    try:
+        carregar_vendas_dia()
+    except Exception:
+        pass
+
+# ====== CAIXA ======
     f_cx = ttk.Frame(aba_caixa, padding=8)
     f_cx.pack(fill="both", expand=True)
     top_cx = ttk.Frame(f_cx)
@@ -2588,99 +2691,4 @@ def abrir_login():
         cursor.execute("SELECT password_hash FROM users WHERE username=?", (user,))
         r = cursor.fetchone()
         if not r:
-            messagebox.showerror("Erro", "Usuário não encontrado")
-            return
-        if hash_password(pw) == r[0]:
-            must_change = False
-            try:
-                if is_admin(user) and days_since_last_change(user) >= 30:
-                    must_change = True
-            except Exception:
-                must_change = True
-            if must_change:
-                dlg = ChangePasswordDialog(login_win, user, must_change=True)
-                login_win.wait_window(dlg)
-                if not dlg.result:
-                    return
-            login_win.withdraw()
-            try:
-                abrir_sistema_com_logo(user, login_win)
-            except Exception as ex:
-                messagebox.showerror("Erro fatal", f"Falha ao abrir a janela principal\n\n{ex}")
-                login_win.deiconify()
-        else:
-            messagebox.showerror("Erro", "Senha incorreta")
-
-    def criar_usuario():
-        user = ent_user.get().strip()
-        pw = ent_pass.get().strip()
-        if not user or not pw:
-            messagebox.showwarning("Atenção", "Informe usuário e senha para criar")
-            return
-        try:
-            today = datetime.datetime.now().strftime("%d/%m/%Y")
-            with conn:
-                cursor.execute("PRAGMA table_info(users)")
-                cols = [c[1] for c in cursor.fetchall()]
-                if 'password_last_changed' in cols:
-                    cursor.execute(
-                        "INSERT INTO users(username, password_hash, is_admin, password_last_changed) VALUES (?,?,0,?)",
-                        (user, hash_password(pw), today)
-                    )
-                else:
-                    cursor.execute(
-                        "INSERT INTO users(username, password_hash, is_admin) VALUES (?,?,0)",
-                        (user, hash_password(pw))
-                    )
-                cursor.execute(
-                    "INSERT OR IGNORE INTO user_password_history (username, password_hash, changed_at) VALUES (?,?,?)",
-                    (user, hash_password(pw), today)
-                )
-            messagebox.showinfo("OK", "Usuário criado com sucesso")
-        except sqlite3.IntegrityError:
-            messagebox.showerror("Erro", "Usuário já existe")
-    btn_frame = ttk.Frame(frm)
-    btn_frame.pack(fill="x", pady=12)
-    ttk.Button(btn_frame, text="Entrar", command=tentar_login).pack(
-        side="left", expand=True, padx=6
-    )
-    ttk.Button(btn_frame, text="Criar Usuário", command=criar_usuario).pack(
-        side="left", expand=True, padx=6
-    )
-    ttk.Separator(login_win, orient="horizontal").pack(
-        fill="x", padx=8, pady=(4, 2), side="bottom"
-    )
-    footer_text = f"Developed by André Mariano (v{get_local_version()})\n\nBeta Test"
-    ttk.Label(
-        login_win,
-        text=footer_text,
-        style="Footer.TLabel",
-        anchor="center",
-        justify="center",
-    ).pack(side="bottom", fill="x", pady=(0, 8))
-    def on_close_login():
-        if messagebox.askyesno("Sair", "Deseja encerrar o sistema?"):
-            try:
-                conn.close()
-            except Exception:
-                pass
-            login_win.destroy()
-        else:
-            return
-    login_win.protocol("WM_DELETE_WINDOW", on_close_login)
-    login_win.mainloop()
-# ===================== MAIN =====================
-if __name__ == "__main__":
-    try:
-        abrir_login()
-    except Exception:
-        logging.error("Erro ao iniciar a aplicação", exc_info=True)
-        try:
-            messagebox.showerror(
-                "Erro", "Falha ao iniciar a aplicação. Consulte o arquivo de logs."
-            )
-        except Exception:
-            pass
-
-
-# ================= ENVIO DE CUPOM POR E-MAIL ================= 
+            messagebox.showe
