@@ -169,7 +169,7 @@ def backup_bulk_dir(local_dir: str, tipo: str):
 DISABLE_AUTO_UPDATE = DISABLE_AUTO_UPDATE = (
     False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "2.8"
+APP_VERSION = "2.9"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -1488,13 +1488,31 @@ def abrir_sistema_com_logo(username, login_win):
     ag_tree = ttk.Treeview(ag_list_frame, columns=("Data", "Responsável"), show="headings", height=6)
     ag_tree.heading("Data", text="Data")
     ag_tree.heading("Responsável", text="Responsável")
-    ag_tree.column("Data", width=120, anchor="center")
-    ag_tree.column("Responsável", width=420, anchor="w")
+    ag_tree.column("Data", width=120, anchor="center", stretch=False)
+    ag_tree.column("Responsável", width=900, anchor="w", stretch=True)
     ag_tree.pack(side="left", fill="both", expand=True)
     ag_scroll = ttk.Scrollbar(ag_list_frame, orient="vertical", command=ag_tree.yview)
     ag_tree.configure(yscroll=ag_scroll.set)
     ag_scroll.pack(side="right", fill="y")
 
+    ag_scroll_x = ttk.Scrollbar(ag_list_frame, orient="horizontal", command=ag_tree.xview)
+    ag_tree.configure(xscroll=ag_scroll_x.set)
+    ag_scroll_x.pack(side="bottom", fill="x")
+
+    def _ver_detalhes_agendamento(event=None):
+        sel = ag_tree.selection()
+        if not sel:
+            return
+        iso = sel[0]  # iid = data_iso
+        try:
+            cursor.execute("SELECT responsavel FROM agendamentos_celulares WHERE data_iso=?", (iso,))
+            r = cursor.fetchone()
+            detalhes = (r[0] if r and r[0] else "(sem agendamentos)")
+        except Exception as ex:
+            detalhes = f"(erro ao carregar) {ex}"
+        messagebox.showinfo(f"Agendamentos {_br_date_from_iso(iso)}", detalhes)
+
+    ag_tree.bind("<Double-1>", _ver_detalhes_agendamento)
     def _mes_ano_pt(year: int, month: int) -> str:
         # Nomes em pt-BR
         nomes = [
@@ -1538,7 +1556,18 @@ def abrir_sistema_com_logo(username, login_win):
         try:
             cursor.execute("SELECT data_iso, responsavel FROM agendamentos_celulares WHERE substr(data_iso,1,7)=? ORDER BY data_iso", (ym,))
             for iso, r in cursor.fetchall():
-                ag_tree.insert("", "end", values=(_br_date_from_iso(iso), r or ""))
+                linhas = [l.strip() for l in (r or "").splitlines() if l.strip()]
+                if not linhas:
+                    resumo = ""
+                elif len(linhas) == 1:
+                    resumo = linhas[0]
+                else:
+                    resumo = f"{linhas[0]} (+{len(linhas)-1})"
+                resumo = " ".join(resumo.split())
+                MAX = 60
+                if len(resumo) > MAX:
+                    resumo = resumo[:MAX-3] + "..."
+                ag_tree.insert("", "end", iid=str(iso), values=(_br_date_from_iso(iso), resumo))
         except Exception as ex:
             logging.error(f"Falha ao atualizar lista de agendamentos: {ex}", exc_info=True)
 
@@ -1546,6 +1575,7 @@ def abrir_sistema_com_logo(username, login_win):
         year = ag_state["year"]
         month = ag_state["month"]
         iso = _iso_date(year, month, day)
+
         # Valor atual (se existir)
         atual = ""
         try:
@@ -1556,30 +1586,92 @@ def abrir_sistema_com_logo(username, login_win):
         except Exception:
             pass
 
-        titulo = "Agendamento - Retirada de Celulares"
-        prompt = f"Quem vai buscar os celulares em {_br_date_from_iso(iso)}?\n\n(Deixe em branco para remover o agendamento.)"
-        nome = simpledialog.askstring(titulo, prompt, initialvalue=atual, parent=root)
-        if nome is None:
-            return  # cancelado
-        nome = (nome or "").strip()
+        # --- Janela multilinha (substitui simpledialog.askstring) ---
+        win = tk.Toplevel(root)
+        win.title("Agendamento - Retirada de Celulares")
+        win.resizable(False, False)
         try:
-            with conn:
-                if nome:
-                    agora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-                    cursor.execute(
-                        "INSERT INTO agendamentos_celulares(data_iso, responsavel, atualizado_em) VALUES (?,?,?)"
-                        " ON CONFLICT(data_iso) DO UPDATE SET responsavel=excluded.responsavel, atualizado_em=excluded.atualizado_em",
-                        (iso, nome, agora),
-                    )
-                else:
-                    cursor.execute("DELETE FROM agendamentos_celulares WHERE data_iso=?", (iso,))
-        except Exception as ex:
-            logging.error(f"Falha ao salvar agendamento: {ex}", exc_info=True)
-            messagebox.showerror("Erro", f"Não foi possível salvar o agendamento.\n{ex}")
-            return
+            win.transient(root)
+            win.grab_set()
+        except Exception:
+            pass
 
-        refresh_agendamento_calendar()
+        # Centraliza
+        try:
+            win.update_idletasks()
+            x = root.winfo_rootx() + (root.winfo_width() // 2) - 240
+            y = root.winfo_rooty() + (root.winfo_height() // 2) - 170
+            win.geometry(f"480x340+{x}+{y}")
+        except Exception:
+            win.geometry("480x340")
 
+        info = (
+            f"Pessoas que vão buscar em {_br_date_from_iso(iso)}:\n\n"
+            "• Digite UM NOME por linha\n"
+            "• Deixe em branco para remover o agendamento do dia\n"
+        )
+        ttk.Label(win, text=info, justify="left").pack(anchor="w", padx=12, pady=(12, 6))
+
+        frm_text = ttk.Frame(win)
+        frm_text.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+
+        txt = tk.Text(frm_text, height=10, wrap="word")
+        txt.pack(side="left", fill="both", expand=True)
+
+        sb = ttk.Scrollbar(frm_text, orient="vertical", command=txt.yview)
+        sb.pack(side="right", fill="y")
+        txt.configure(yscrollcommand=sb.set)
+
+        if atual:
+            txt.insert("1.0", atual)
+
+        btns = ttk.Frame(win)
+        btns.pack(fill="x", padx=12, pady=(0, 12))
+
+        def _salvar():
+            texto_in = (txt.get("1.0", "end") or "").strip()
+            nomes = [l.strip() for l in texto_in.splitlines() if l.strip()]
+            texto = "\n".join(nomes)
+
+            try:
+                with conn:
+                    if texto:
+                        agora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                        cursor.execute(
+                            "INSERT INTO agendamentos_celulares(data_iso, responsavel, atualizado_em) VALUES (?,?,?) "
+                            "ON CONFLICT(data_iso) DO UPDATE SET responsavel=excluded.responsavel, atualizado_em=excluded.atualizado_em",
+                            (iso, texto, agora),
+                        )
+                    else:
+                        cursor.execute("DELETE FROM agendamentos_celulares WHERE data_iso=?", (iso,))
+            except Exception as ex:
+                logging.error(f"Falha ao salvar agendamento: {ex}", exc_info=True)
+                messagebox.showerror("Erro", f"Não foi possível salvar o agendamento.\n{ex}", parent=win)
+                return
+
+            try:
+                win.destroy()
+            except Exception:
+                pass
+
+            refresh_agendamento_calendar()
+
+        def _cancelar():
+            try:
+                win.destroy()
+            except Exception:
+                pass
+
+        ttk.Button(btns, text="Cancelar", style="Secondary.TButton", command=_cancelar).pack(side="right", padx=6)
+        ttk.Button(btns, text="Salvar", style="Success.TButton", command=_salvar).pack(side="right", padx=6)
+
+        win.bind("<Escape>", lambda e: _cancelar())
+        win.bind("<Control-Return>", lambda e: _salvar())
+
+        win.bind("<Return>", lambda e: "break")
+        # Enter cria nova linha no Text e não aciona atalhos globais
+        txt.bind('<Return>', lambda e: (txt.insert('insert', '\n'), 'break')[1])
+        txt.focus_set()
     def refresh_agendamento_calendar():
         year = ag_state["year"]
         month = ag_state["month"]
@@ -1610,7 +1702,8 @@ def abrir_sistema_com_logo(username, login_win):
                 resp = ag_map.get(day, "")
                 # Texto do botão: dia + indicador
                 if resp:
-                    txt = f"{day}\n✓"
+                    qtd = len([l for l in str(resp).splitlines() if l.strip()])
+                    txt = f"{day}\n✓{qtd}"
                     style_btn = "Accent.TButton"
                 else:
                     txt = str(day)
@@ -2145,8 +2238,8 @@ def abrir_sistema_com_logo(username, login_win):
     btn_limpar_venda.pack(side="left", padx=6)
 
     # (Opcional) Atalho: Enter finaliza a venda
-    f_v.bind_all("<Return>", lambda e: finalizar_venda())
-
+    # Atalho Enter (bind_all) removido para não interferir em campos multilinha (Agendamento)
+    # Use Ctrl+Enter ou clique em '✓ Finalizar Venda'.
     hist_v_frame = ttk.Frame(aba_vendas, padding=(8, 0))
     hist_v_frame.pack(fill="both", expand=True)
 
