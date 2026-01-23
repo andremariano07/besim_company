@@ -212,7 +212,7 @@ def backup_bulk_dir(local_dir: str, tipo: str):
 DISABLE_AUTO_UPDATE = DISABLE_AUTO_UPDATE = (
     False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "3.3"
+APP_VERSION = "3.4"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -3557,69 +3557,195 @@ def abrir_sistema_com_logo(username, login_win):
         except Exception:
             pass
 # ================= TELA DE LOGIN =================
+
 def abrir_login():
     login_win = tk.Tk()
     login_win.title("Login - BESIM COMPANY")
-    login_win.geometry("420x300")
+    login_win.geometry("520x360")
+    login_win.minsize(520, 360)
     login_win.resizable(False, False)
+
     setup_global_exception_handlers(login_win)
     _bind_fullscreen_shortcuts(login_win)
+
     style = ttk.Style()
     try:
         style.theme_use("clam")
     except Exception:
         pass
-    style.configure("Footer.TLabel", foreground="red", font=("Segoe UI", 10, "bold"))
-    frm = ttk.Frame(login_win, padding=12)
-    frm.pack(fill="both", expand=True)
+
+    # Dark fixo
+    pal = THEME_DARK
+
+    def _hex_to_rgb(h):
+        h = h.lstrip("#")
+        return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
+    def _rgb_to_hex(rgb):
+        return "#{:02x}{:02x}{:02x}".format(*rgb)
+
+    def _draw_vertical_gradient(canvas, w, h, top="#0b1220", bottom="#111827", steps=220):
+        c1 = _hex_to_rgb(top)
+        c2 = _hex_to_rgb(bottom)
+        for i in range(steps):
+            t = i / max(steps - 1, 1)
+            r = int(c1[0] + (c2[0] - c1[0]) * t)
+            g = int(c1[1] + (c2[1] - c1[1]) * t)
+            b = int(c1[2] + (c2[2] - c1[2]) * t)
+            y1 = int(h * (i / steps))
+            y2 = int(h * ((i + 1) / steps))
+            canvas.create_rectangle(0, y1, w, y2, outline="", fill=_rgb_to_hex((r, g, b)))
+
+    bg = tk.Canvas(login_win, highlightthickness=0, bd=0)
+    bg.pack(fill="both", expand=True)
+
+    login_win.update_idletasks()
+    _draw_vertical_gradient(bg, 520, 360, top="#0b1220", bottom="#111827")
+
+    # Blobs (bolas) — azul, vermelho e cinza (reposicionadas para não tampar o logo)
+    bg.create_oval(-140, -120, 180, 220, fill=pal["accent"], outline="")   # azul
+    bg.create_oval(360, -140, 700, 220, fill=pal["danger"], outline="")    # vermelho
+    bg.create_oval(360, 210, 740, 610, fill=pal["border"], outline="")     # cinza
+
+    # Camada escura para suavizar o fundo (não afeta o card porque ele é desenhado depois)
+    bg.create_rectangle(0, 0, 520, 360, fill="#0b1220", outline="", stipple="gray25")
+
+    # Card central
+    card_x1, card_y1, card_x2, card_y2 = 110, 62, 410, 298
+    bg.create_rectangle(card_x1 + 6, card_y1 + 8, card_x2 + 6, card_y2 + 8,
+                        fill="#000000", outline="", stipple="gray50")
+    bg.create_rectangle(card_x1, card_y1, card_x2, card_y2,
+                        fill=pal["panel"], outline=pal["border"], width=2)
+    bg.create_rectangle(card_x1, card_y1, card_x2, card_y1 + 58,
+                        fill=pal["panel2"], outline="", width=0)
+
+    # Logo + glow atrás (garantido atrás do logo)
     logo_path = os.path.join(os.getcwd(), "logo.png")
+    cx, cy = (card_x1 + card_x2)//2, card_y1 + 30
+
+    # Glow (desenhado antes do logo)
+    bg.create_oval(cx-92, cy-32, cx+92, cy+32, fill=pal["accent"], outline="")
+    bg.create_oval(cx-74, cy-26, cx+74, cy+26, fill=pal["danger"], outline="")
+    bg.create_rectangle(cx-118, cy-40, cx+118, cy+40, fill="#000000", outline="", stipple="gray50")
+
     if os.path.exists(logo_path):
         try:
-            img = Image.open(logo_path).resize((200, 62))
+            img = Image.open(logo_path).resize((160, 52))
             logo_img = ImageTk.PhotoImage(img)
-            lbl_logo = ttk.Label(frm, image=logo_img)
-            lbl_logo.image = logo_img
-            lbl_logo.pack(pady=(0, 8))
+            bg.create_image(cx, cy, image=logo_img)
+            bg.logo_img = logo_img
         except Exception:
-            ttk.Label(frm, text="BESIM COMPANY", font=("Segoe UI", 14, "bold")).pack(
-                pady=(0, 8)
-            )
+            bg.create_text(cx, cy, text="BESIM COMPANY", fill=pal["text"], font=("Segoe UI", 14, "bold"))
     else:
-        ttk.Label(frm, text="BESIM COMPANY", font=("Segoe UI", 14, "bold")).pack(
-            pady=(0, 8)
-        )
-    ttk.Label(frm, text="Usuário").pack(anchor="w", pady=(6, 0))
+        bg.create_text(cx, cy, text="BESIM COMPANY", fill=pal["text"], font=("Segoe UI", 14, "bold"))
+
+    bg.create_text((card_x1 + card_x2)//2, card_y1 + 72,
+                   text="Acesse sua conta para continuar",
+                   fill=pal["muted"], font=("Segoe UI", 9))
+
+    frm = tk.Frame(login_win, bg=pal["panel"])
+    bg.create_window((card_x1 + card_x2)//2, (card_y1 + card_y2)//2 + 18, window=frm, width=280, height=210)
+
+    style.configure("Accent.TButton", foreground="white", background=pal["accent"], padding=8,
+                    font=("Segoe UI", 10, "bold"))
+    style.map("Accent.TButton", background=[("active", "#1d4ed8"), ("pressed", "#1e40af")])
+
+    style.configure("Ghost.TButton", foreground=pal["text"], background=pal["panel2"], padding=8,
+                    font=("Segoe UI", 10, "bold"))
+    style.map("Ghost.TButton", background=[("active", pal["border"]), ("pressed", pal["panel2"])])
+
+    style.configure("TEntry", padding=6)
+
+    remember_path = os.path.join(os.getcwd(), "remember_user.txt")
+
+    def _load_remembered_user():
+        try:
+            if os.path.isfile(remember_path):
+                with open(remember_path, "r", encoding="utf-8") as f:
+                    return (f.read() or "").strip()
+        except Exception:
+            pass
+        return ""
+
+    def _save_remembered_user(username: str):
+        try:
+            with open(remember_path, "w", encoding="utf-8") as f:
+                f.write((username or "").strip())
+        except Exception:
+            pass
+
+    def _clear_remembered_user():
+        try:
+            if os.path.isfile(remember_path):
+                os.remove(remember_path)
+        except Exception:
+            pass
+
+    tk.Label(frm, text="Usuário", bg=pal["panel"], fg=pal["muted"], font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(6, 2))
     ent_user = ttk.Entry(frm)
-    ent_user.pack(fill="x", pady=4)
-    ttk.Label(frm, text="Senha").pack(anchor="w", pady=(6, 0))
-    ent_pass = ttk.Entry(frm, show="*")
-    ent_pass.pack(fill="x", pady=4)
+    ent_user.pack(fill="x", pady=(0, 8))
+
+    tk.Label(frm, text="Senha", bg=pal["panel"], fg=pal["muted"], font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(2, 2))
+    pass_row = tk.Frame(frm, bg=pal["panel"])
+    pass_row.pack(fill="x", pady=(0, 4))
+
+    ent_pass = ttk.Entry(pass_row, show="*")
+    ent_pass.pack(side="left", fill="x", expand=True)
+
+    show_var = tk.IntVar(value=0)
+
+    def _toggle_pass():
+        ent_pass.config(show="" if show_var.get() else "*")
+
+    ttk.Checkbutton(pass_row, text="👁️", variable=show_var, command=_toggle_pass).pack(side="left", padx=(6, 0))
+
+    remember_var = tk.IntVar(value=1)
+    remember_row = tk.Frame(frm, bg=pal["panel"])
+    remember_row.pack(fill="x", pady=(6, 8))
+    ttk.Checkbutton(remember_row, text="Lembrar usuário", variable=remember_var).pack(side="left")
+
     login_win.ent_user = ent_user
     login_win.ent_pass = ent_pass
 
+    remembered = _load_remembered_user()
+    if remembered:
+        ent_user.insert(0, remembered)
+        ent_pass.focus_set()
+    else:
+        ent_user.focus_set()
+
     def tentar_login():
-        user = ent_user.get().strip()
-        pw = ent_pass.get().strip()
+        user = (ent_user.get() or "").strip()
+        pw = (ent_pass.get() or "").strip()
         if not user or not pw:
             messagebox.showwarning("Atenção", "Informe usuário e senha")
             return
+
         cursor.execute("SELECT password_hash FROM users WHERE username=?", (user,))
         r = cursor.fetchone()
         if not r:
             messagebox.showerror("Erro", "Usuário não encontrado")
             return
+
         if hash_password(pw) == r[0]:
+            if remember_var.get() == 1:
+                _save_remembered_user(user)
+            else:
+                _clear_remembered_user()
+
             must_change = False
             try:
                 if is_admin(user) and days_since_last_change(user) >= 30:
                     must_change = True
             except Exception:
                 must_change = True
+
             if must_change:
                 dlg = ChangePasswordDialog(login_win, user, must_change=True)
                 login_win.wait_window(dlg)
                 if not dlg.result:
                     return
+
             login_win.withdraw()
             try:
                 abrir_sistema_com_logo(user, login_win)
@@ -3630,8 +3756,8 @@ def abrir_login():
             messagebox.showerror("Erro", "Senha incorreta")
 
     def criar_usuario():
-        user = ent_user.get().strip()
-        pw = ent_pass.get().strip()
+        user = (ent_user.get() or "").strip()
+        pw = (ent_pass.get() or "").strip()
         if not user or not pw:
             messagebox.showwarning("Atenção", "Informe usuário e senha para criar")
             return
@@ -3657,25 +3783,16 @@ def abrir_login():
             messagebox.showinfo("OK", "Usuário criado com sucesso")
         except sqlite3.IntegrityError:
             messagebox.showerror("Erro", "Usuário já existe")
-    btn_frame = ttk.Frame(frm)
-    btn_frame.pack(fill="x", pady=12)
-    ttk.Button(btn_frame, text="Entrar", command=tentar_login).pack(
-        side="left", expand=True, padx=6
-    )
-    ttk.Button(btn_frame, text="Criar Usuário", command=criar_usuario).pack(
-        side="left", expand=True, padx=6
-    )
-    ttk.Separator(login_win, orient="horizontal").pack(
-        fill="x", padx=8, pady=(4, 2), side="bottom"
-    )
-    footer_text = f"Developed by André Mariano (v{get_local_version()})\n\nBeta Test"
-    ttk.Label(
-        login_win,
-        text=footer_text,
-        style="Footer.TLabel",
-        anchor="center",
-        justify="center",
-    ).pack(side="bottom", fill="x", pady=(0, 8))
+
+    btns = tk.Frame(frm, bg=pal["panel"])
+    btns.pack(fill="x", pady=(6, 0))
+    ttk.Button(btns, text="Entrar", style="Accent.TButton", command=tentar_login).pack(side="left", expand=True, fill="x", padx=(0, 6))
+    ttk.Button(btns, text="Criar Usuário", style="Ghost.TButton", command=criar_usuario).pack(side="left", expand=True, fill="x")
+
+    footer_text = f"Developed by André Mariano (v{get_local_version()})  •  Beta Test"
+    bg.create_text(260, 334, text=footer_text, fill="#9ca3af", font=("Segoe UI", 9))
+
+    login_win.bind("<Return>", lambda e: tentar_login())
 
     def on_close_login():
         if messagebox.askyesno("Sair", "Deseja encerrar o sistema?"):
@@ -3699,8 +3816,10 @@ def abrir_login():
         return
 
     login_win.protocol("WM_DELETE_WINDOW", on_close_login)
+    login_win.bind("<Escape>", lambda e: on_close_login())
 
     login_win.mainloop()
+
 # ===================== MAIN =====================
 if __name__ == "__main__":
     try:
