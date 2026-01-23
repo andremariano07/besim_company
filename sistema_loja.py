@@ -212,7 +212,7 @@ def backup_bulk_dir(local_dir: str, tipo: str):
 DISABLE_AUTO_UPDATE = DISABLE_AUTO_UPDATE = (
     False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "3.2"
+APP_VERSION = "3.3"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
