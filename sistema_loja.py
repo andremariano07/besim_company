@@ -20,6 +20,7 @@ from PIL import Image, ImageTk
 import sqlite3
 import datetime
 import calendar
+import re
 import os
 import sys
 import hashlib
@@ -39,6 +40,48 @@ from email.message import EmailMessage
 import os
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
+
+
+# ===================== VISUAL KIT (Windows 11 dark / light) =====================
+# Preferência: Modern Dark (grafite) com destaques azul/verde + toasts empilhados
+try:
+    import sv_ttk  # pip install sv-ttk
+    _HAS_SV_TTK = True
+except Exception:
+    sv_ttk = None
+    _HAS_SV_TTK = False
+
+THEME_DARK = {
+    "bg": "#1f1f1f",
+    "panel": "#252526",
+    "panel2": "#2b2b2b",
+    "text": "#f2f2f2",
+    "muted": "#c7c7c7",
+    "border": "#3a3a3a",
+    "accent": "#2563eb",   # azul
+    "accent2": "#22c55e",  # verde
+    "warn": "#f6c453",
+    "danger": "#ef4444",
+}
+
+THEME_LIGHT = {
+    "bg": "#f5f6f7",
+    "panel": "#ffffff",
+    "panel2": "#f3f4f6",
+    "text": "#111827",
+    "muted": "#4b5563",
+    "border": "#e5e7eb",
+    "accent": "#2563eb",
+    "accent2": "#16a34a",
+    "warn": "#d97706",
+    "danger": "#dc2626",
+}
+
+BASE_FONT = ("Segoe UI", 10)
+HEADING_FONT = ("Segoe UI", 11, "bold")
+BUTTON_FONT = ("Segoe UI", 10, "bold")
+PADX = 10
+PADY = 8
 
 # ================= ENVIO DE CUPOM POR E-MAIL (movido para topo) =================
 
@@ -169,7 +212,7 @@ def backup_bulk_dir(local_dir: str, tipo: str):
 DISABLE_AUTO_UPDATE = DISABLE_AUTO_UPDATE = (
     False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "3.1"
+APP_VERSION = "3.2"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -469,6 +512,327 @@ def bring_app_to_front():
                 pass
     except Exception:
         pass
+
+
+# ===================== TOAST (não-bloqueante) — Premium + Empilhado =====================
+_ACTIVE_TOAST_ROOT = None
+
+def _resolve_toast_base(parent=None):
+    """Escolhe a melhor janela base para posicionar o toast."""
+    try:
+        if parent is not None and hasattr(parent, 'winfo_exists') and parent.winfo_exists():
+            return parent
+    except Exception:
+        pass
+    try:
+        base = _ACTIVE_TOAST_ROOT
+        if base is not None and hasattr(base, 'winfo_exists') and base.winfo_exists():
+            return base
+    except Exception:
+        pass
+    try:
+        base = getattr(tk, '_default_root', None)
+        if base is None or not hasattr(base, 'winfo_exists') or not base.winfo_exists():
+            return None
+        # Se a root estiver escondida, tenta achar algum Toplevel visível
+        try:
+            if str(base.state()) == 'withdrawn':
+                for w in reversed(base.winfo_children()):
+                    try:
+                        if isinstance(w, tk.Toplevel) and w.winfo_exists() and str(w.state()) != 'withdrawn':
+                            return w
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        return base
+    except Exception:
+        return None
+
+
+def _toast_level_from_title(title) -> str:
+    """Heurística simples para escolher level do toast a partir do título."""
+    try:
+        t = str(title or '').strip().lower()
+        if any(k in t for k in ('erro', 'falha')):
+            return 'error'
+        if any(k in t for k in ('atenção', 'atencao', 'aviso', 'warn')):
+            return 'warn'
+        if any(k in t for k in ('sucesso', 'ok', 'aprovado', 'upgrade', 'os', 'devolução', 'saida', 'saída', 'venda', 'cliente', 'produto', 'fechar', 'caixa')):
+            return 'ok'
+        return 'info'
+    except Exception:
+        return 'info'
+
+
+def _toast_icon(level: str) -> str:
+    return {'ok': '✅', 'warn': '⚠️', 'error': '❌', 'info': 'ℹ️'}.get(level or 'info', 'ℹ️')
+
+
+def _get_toast_colors(level: str):
+    # Paleta moderna escura por padrão
+    base_bg = "#1f1f1f"
+    colors = {
+        'info': (base_bg, '#9cdcfe', '#2563eb'),
+        'ok': (base_bg, '#c7f9cc', '#22c55e'),
+        'warn': (base_bg, '#ffe8b5', '#f6c453'),
+        'error': (base_bg, '#ffd1d1', '#ef4444'),
+    }
+    return colors.get(level, colors['info'])
+
+
+def _reposition_toasts(base, anchor='top-right', margin=16, gap=10):
+    """Recalcula posição de todos os toasts empilhados."""
+    try:
+        stack = getattr(base, '_toast_stack', []) or []
+        stack = [w for w in stack if w is not None and hasattr(w, 'winfo_exists') and w.winfo_exists()]
+        base._toast_stack = stack
+        if not stack:
+            return
+        base.update_idletasks()
+        rx = base.winfo_rootx()
+        ry = base.winfo_rooty()
+        rw = base.winfo_width()
+        if rw <= 1:
+            rw = max(base.winfo_screenwidth(), 800)
+        y = ry + margin
+        for win in stack:
+            try:
+                win.update_idletasks()
+                w = win.winfo_width()
+                h = win.winfo_height()
+                if anchor == 'top':
+                    x = rx + (rw // 2) - (w // 2)
+                else:
+                    x = rx + rw - w - margin
+                win.geometry(f'+{x}+{y}')
+                y += h + gap
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def show_toast(root: tk.Misc = None, text: str = '', level: str = 'info', duration_ms: int = 3500,
+               anchor: str = 'top-right', max_stack: int = 4):
+    """Mostra uma notificação tipo toast (não bloqueia a UI) — empilhado (2–4)."""
+    global _ACTIVE_TOAST_ROOT
+    try:
+        base = _resolve_toast_base(root)
+        if base is None:
+            return
+        _ACTIVE_TOAST_ROOT = base
+
+        stack = getattr(base, '_toast_stack', []) or []
+        stack = [w for w in stack if w is not None and hasattr(w, 'winfo_exists') and w.winfo_exists()]
+        base._toast_stack = stack
+
+        while len(stack) >= int(max_stack):
+            try:
+                old = stack.pop(0)
+                if old and old.winfo_exists():
+                    old.destroy()
+            except Exception:
+                pass
+
+        bg, fg, bar = _get_toast_colors(level)
+        icon = _toast_icon(level)
+
+        win = tk.Toplevel(base)
+        win.overrideredirect(True)
+        try:
+            win.attributes('-topmost', True)
+        except Exception:
+            pass
+        try:
+            win.attributes('-alpha', 0.0)
+        except Exception:
+            pass
+
+        shadow = tk.Frame(win, bg="#000000", bd=0, highlightthickness=0)
+        shadow.pack(fill='both', expand=True)
+        outer = tk.Frame(shadow, bg=bg, bd=0, highlightthickness=1, highlightbackground="#3a3a3a")
+        outer.pack(padx=2, pady=2)
+
+        tk.Frame(outer, bg=bar, width=6).pack(side='left', fill='y')
+        body = tk.Frame(outer, bg=bg)
+        body.pack(side='left', fill='both', expand=True)
+
+        msg = f"{icon}  {text}".strip()
+        tk.Label(body, text=msg, bg=bg, fg=fg, font=("Segoe UI", 10, "bold"), justify='left', anchor='w').pack(
+            padx=12, pady=10
+        )
+
+        win.update_idletasks()
+        stack.append(win)
+        base._toast_stack = stack
+        _reposition_toasts(base, anchor=anchor)
+
+        # animação (fade + slide leve)
+        try:
+            cur_geo = win.geometry()
+            mm = re.match(r"\d+x\d+\+(\-?\d+)\+(\-?\d+)", cur_geo)
+            if mm:
+                tx, ty = int(mm.group(1)), int(mm.group(2))
+            else:
+                tx, ty = win.winfo_x(), win.winfo_y()
+            start_y = ty - 12
+        except Exception:
+            tx, ty, start_y = win.winfo_x(), win.winfo_y(), win.winfo_y() - 12
+
+        def _anim_in(step=0):
+            try:
+                a = min(1.0, (step + 1) / 10)
+                try:
+                    win.attributes('-alpha', a)
+                except Exception:
+                    pass
+                yy = int(start_y + (ty - start_y) * a)
+                win.geometry(f'+{tx}+{yy}')
+                if step < 9:
+                    win.after(18, lambda: _anim_in(step + 1))
+            except Exception:
+                pass
+
+        _anim_in(0)
+
+        def _close():
+            def _anim_out(step=0):
+                try:
+                    a = max(0.0, 1.0 - (step + 1) / 10)
+                    try:
+                        win.attributes('-alpha', a)
+                    except Exception:
+                        pass
+                    if step < 9:
+                        win.after(18, lambda: _anim_out(step + 1))
+                    else:
+                        try:
+                            if win.winfo_exists():
+                                win.destroy()
+                        except Exception:
+                            pass
+                        try:
+                            stack2 = getattr(base, '_toast_stack', []) or []
+                            stack2 = [w for w in stack2 if w is not None and hasattr(w, 'winfo_exists') and w.winfo_exists()]
+                            base._toast_stack = stack2
+                            _reposition_toasts(base, anchor=anchor)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+            _anim_out(0)
+
+        win.after(max(900, int(duration_ms)), _close)
+
+    except Exception:
+        pass
+
+
+# Monkey patch: transforma todos os messagebox.showinfo em toast (sem mudar chamadas)
+_ORIG_SHOWINFO = messagebox.showinfo
+
+def _showinfo_toast(title, message, *args, **kwargs):
+    try:
+        parent = kwargs.get('parent')
+        level = _toast_level_from_title(title)
+        show_toast(parent, message, level=level, duration_ms=3500, anchor='top-right', max_stack=4)
+    except Exception:
+        pass
+    return 'ok'
+
+messagebox.showinfo = _showinfo_toast
+
+# ===================== TOOLTIP (Micro UX) =====================
+class ToolTip:
+    """Tooltip simples para Tkinter/ttk."""
+    def __init__(self, widget, text: str, delay_ms: int = 450):
+        self.widget = widget
+        self.text = text
+        self.delay_ms = delay_ms
+        self._after_id = None
+        self.tip = None
+        widget.bind('<Enter>', self._on_enter, add=True)
+        widget.bind('<Leave>', self._on_leave, add=True)
+        widget.bind('<ButtonPress>', self._on_leave, add=True)
+
+    def _on_enter(self, _evt=None):
+        self._schedule()
+
+    def _on_leave(self, _evt=None):
+        self._unschedule()
+        self._hide()
+
+    def _schedule(self):
+        self._unschedule()
+        self._after_id = self.widget.after(self.delay_ms, self._show)
+
+    def _unschedule(self):
+        try:
+            if self._after_id:
+                self.widget.after_cancel(self._after_id)
+        except Exception:
+            pass
+        self._after_id = None
+
+    def _show(self):
+        if self.tip or not self.text:
+            return
+        try:
+            x = self.widget.winfo_rootx() + 14
+            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 8
+            self.tip = tk.Toplevel(self.widget)
+            self.tip.overrideredirect(True)
+            try:
+                self.tip.attributes('-topmost', True)
+            except Exception:
+                pass
+            frm = tk.Frame(self.tip, bg='#111827', highlightbackground='#374151', highlightthickness=1)
+            frm.pack()
+            lbl = tk.Label(frm, text=self.text, bg='#111827', fg='#f9fafb', font=('Segoe UI', 9), justify='left')
+            lbl.pack(padx=10, pady=6)
+            self.tip.geometry(f'+{x}+{y}')
+        except Exception:
+            self.tip = None
+
+    def _hide(self):
+        try:
+            if self.tip and self.tip.winfo_exists():
+                self.tip.destroy()
+        except Exception:
+            pass
+        self.tip = None
+
+def add_tooltip(widget, text: str):
+    try:
+        return ToolTip(widget, text)
+    except Exception:
+        return None
+
+
+# ===================== TREEVIEW: Zebra (linhas alternadas) =====================
+def configure_zebra_tags(tree: ttk.Treeview, theme_name: str = 'dark'):
+    try:
+        pal = THEME_DARK if theme_name == 'dark' else THEME_LIGHT
+        even = pal['bg']
+        odd = pal['panel'] if theme_name == 'dark' else pal['panel2']
+        tree.tag_configure('even', background=even)
+        tree.tag_configure('odd', background=odd)
+    except Exception:
+        pass
+
+def apply_zebra(tree: ttk.Treeview):
+    """Aplica zebra aos itens já inseridos (mantém outras tags)."""
+    try:
+        for i, iid in enumerate(tree.get_children('')):
+            tags = list(tree.item(iid, 'tags') or [])
+            tags = [t for t in tags if t not in ('even', 'odd')]
+            tags.append('even' if i % 2 == 0 else 'odd')
+            tree.item(iid, tags=tuple(tags))
+    except Exception:
+        pass
+
 # ===================== SPLASH SCREEN (corrigida: primeiro plano garantido) =====================
 class SplashScreen(tk.Toplevel):
     def __init__(self, master):
@@ -1219,6 +1583,26 @@ def abrir_sistema_com_logo(username, login_win):
 
     menu_bar = tk.Menu(root)
     menu_sessao = tk.Menu(menu_bar, tearoff=0)
+    # Tema (runtime)
+    menu_tema = tk.Menu(menu_sessao, tearoff=0)
+    tema_var = tk.StringVar(value="dark")
+    def _on_theme_change():
+        try:
+            apply_theme(tema_var.get())
+            _refresh_theme_widgets()
+            _refresh_statusbar_theme()
+            try:
+                for t in (tree_cli, tree_upgrades, ag_tree, tree_cx, tree_m, tree_dev):
+                # Estoque: sem zebra (somente cores por quantidade)
+                    configure_zebra_tags(t, current_theme["name"])
+                    apply_zebra(t)
+            except Exception:
+                pass
+        except Exception:
+            pass
+    menu_tema.add_radiobutton(label="Escuro (Modern Dark)", variable=tema_var, value="dark", command=_on_theme_change)
+    menu_tema.add_radiobutton(label="Claro (Windows 11)", variable=tema_var, value="light", command=_on_theme_change)
+    menu_sessao.add_cascade(label="Tema", menu=menu_tema)
     def do_logout():
         if messagebox.askyesno(
             "Logout", "Deseja finalizar a sessão e voltar ao login?"
@@ -1256,30 +1640,64 @@ def abrir_sistema_com_logo(username, login_win):
     style.configure("TCombobox", padding=4)
     style.configure("Treeview.Heading", font=heading_font)
     style.configure("Treeview", rowheight=26, font=("Segoe UI", 10))
-    # ====== MELHORIAS DE LAYOUT ======
-    try:
-        import sv_ttk # Biblioteca para tema moderno
-        sv_ttk.set_theme("light")
-    except ImportError:
-        style.theme_use("clam")
-    # Ajuste adicional no estilo
-    style.configure("Treeview.Heading", font=("Segoe UI", 11, "bold"), background="#0078D7", foreground="white")
-    style.configure("Treeview", rowheight=28)
-    # >>>>>>>>>>>> INÍCIO DO BLOCO NOVO: CONTRASTE DA TREEVIEW <<<<<<<<<<<<
-    # Força texto preto em tema claro + fundo branco
-    style.configure(
-        "Treeview",
-        foreground="black",
-        background="white",
-        fieldbackground="white",
-    )
-    style.map(
-        "Treeview",
-        foreground=[("!disabled", "black"), ("selected", "white")],
-        background=[("selected", "#0078D7")],  # azul Windows para seleção
-    )
-    # >>>>>>>>>>>> FIM DO BLOCO NOVO <<<<<<<<<<<<
+
+    # ====== MELHORIAS DE LAYOUT / TEMA (Modern Dark + toggle runtime) ======
+    # Tema padrão: ESCURO (grafite) com destaques azul/verde
+    current_theme = {"name": "dark"}
+    palette = THEME_DARK
+
+    def _apply_custom_styles(theme_name: str):
+        nonlocal palette
+        palette = THEME_DARK if theme_name == 'dark' else THEME_LIGHT
+
+        # Fontes globais
+        style.configure('.', font=BASE_FONT)
+        style.configure('TLabel', font=BASE_FONT, padding=6)
+        style.configure('TButton', font=BUTTON_FONT, padding=6)
+        style.configure('TEntry', padding=4)
+        style.configure('TCombobox', padding=4)
+
+        # Notebook (abas) mais bonito
+        style.configure('TNotebook.Tab', padding=[16, 10], font=("Segoe UI", 10, 'bold'))
+        style.map('TNotebook.Tab',
+                  foreground=[('selected', '#ffffff'), ('!selected', palette['muted'])],
+                  background=[('selected', palette['accent']), ('!selected', palette['panel2'])])
+
+        # Treeview (tabela) — header + seleção
+        style.configure('Treeview.Heading', font=HEADING_FONT)
+        try:
+            style.configure('Treeview.Heading', background=palette['panel2'], foreground=palette['text'])
+        except Exception:
+            pass
+        style.configure('Treeview', rowheight=28, font=BASE_FONT)
+        style.configure('Treeview',
+                        background=palette['bg'],
+                        fieldbackground=palette['bg'],
+                        foreground=palette['text'])
+        style.map('Treeview',
+                  foreground=[('selected', '#ffffff')],
+                  background=[('selected', palette['accent'])])
+
+    def apply_theme(theme_name: str):
+        # sv-ttk (se disponível)
+        if _HAS_SV_TTK and sv_ttk is not None:
+            try:
+                sv_ttk.set_theme(theme_name)
+            except Exception:
+                pass
+        else:
+            try:
+                style.theme_use('clam')
+            except Exception:
+                pass
+        current_theme['name'] = theme_name
+        _apply_custom_styles(theme_name)
+
+    # Aplica tema inicial
+    apply_theme('dark')
+
     # Adicionando espaçamento padrão
+
     PADX = 8
     PADY = 6
     # ====== ESTILOS DE BOTÕES (cores e hover) ======
@@ -1298,25 +1716,63 @@ def abrir_sistema_com_logo(username, login_win):
     style.configure("TNotebook.Tab", padding=[12, 8], font=("Segoe UI", 10, "bold"))
     style.configure("TNotebook", tabposition="n")
     style.configure("Footer.TLabel", foreground="red", font=("Segoe UI", 10, "bold"))
-    header = ttk.Frame(root)
-    header.pack(fill="x", padx=12, pady=(8, 0))
+
+    # ====== HEADER premium (logo + nome + versão + usuário + sair) ======
+    header = tk.Frame(root, bg=palette['panel'], highlightbackground=palette['border'], highlightthickness=1)
+    header.pack(fill='x', padx=12, pady=(10, 6))
+
+    h_left = tk.Frame(header, bg=palette['panel'])
+    h_left.pack(side='left', fill='x', expand=True)
+
     logo_path = os.path.join(os.getcwd(), "logo.png")
     if os.path.exists(logo_path):
         try:
-            img = Image.open(logo_path).resize((180, 54))
+            img = Image.open(logo_path).resize((170, 52))
             log_img = ImageTk.PhotoImage(img)
-            lbl_logo = ttk.Label(header, image=log_img)
+            lbl_logo = tk.Label(h_left, image=log_img, bg=palette['panel'])
             lbl_logo.image = log_img
-            lbl_logo.pack(side="left")
+            lbl_logo.pack(side='left', padx=(10, 10), pady=8)
         except Exception:
-            ttk.Label(header, text="BESIM COMPANY", font=("Segoe UI", 14, "bold")).pack(
-                side="left"
-            )
-    else:
-        ttk.Label(header, text="BESIM COMPANY", font=("Segoe UI", 14, "bold")).pack(
-            side="left"
-        )
+            pass
+
+    title_box = tk.Frame(h_left, bg=palette['panel'])
+    title_box.pack(side='left', pady=8)
+    tk.Label(title_box, text="BESIM COMPANY", bg=palette['panel'], fg=palette['text'],
+             font=("Segoe UI", 14, "bold")).pack(anchor='w')
+    tk.Label(title_box, text=f"Sistema Loja • v{get_local_version()}", bg=palette['panel'], fg=palette['muted'],
+             font=("Segoe UI", 10)).pack(anchor='w')
+
+    h_right = tk.Frame(header, bg=palette['panel'])
+    h_right.pack(side='right', pady=8, padx=10)
+
+    role = "admin" if is_admin(username) else "user"
+    chip = tk.Frame(h_right, bg=palette['panel2'], highlightbackground=palette['border'], highlightthickness=1)
+    chip.pack(side='right', padx=(8, 0))
+    lbl_chip = tk.Label(chip, text=f"👤 {username} ({role})", bg=palette['panel2'], fg=palette['text'],
+                        font=("Segoe UI", 10, "bold"))
+    lbl_chip.pack(side='left', padx=10, pady=6)
+
+    btn_sair = ttk.Button(h_right, text="Sair", style="Danger.TButton", command=do_logout)
+    btn_sair.pack(side='right')
+
+    _theme_widgets = {
+        'header': header, 'h_left': h_left, 'h_right': h_right, 'title_box': title_box,
+        'chip': chip, 'lbl_chip': lbl_chip
+    }
+
+    def _refresh_theme_widgets():
+        try:
+            pal = THEME_DARK if current_theme['name'] == 'dark' else THEME_LIGHT
+            for key in ('header', 'h_left', 'h_right', 'title_box'):
+                _theme_widgets[key].configure(bg=pal['panel'], highlightbackground=pal['border'])
+            _theme_widgets['chip'].configure(bg=pal['panel2'], highlightbackground=pal['border'])
+            _theme_widgets['lbl_chip'].configure(bg=pal['panel2'], fg=pal['text'])
+        except Exception:
+            pass
+
+    # Notebook
     abas = ttk.Notebook(root)
+
     abas.pack(fill="both", expand=True, padx=12, pady=(8, 12))
     aba_estoque = ttk.Frame(abas, padding=10)
     aba_vendas = ttk.Frame(abas, padding=10)
@@ -1426,6 +1882,7 @@ def abrir_sistema_com_logo(username, login_win):
     tree_up_frame = ttk.Frame(hist_u_frame)
     tree_up_frame.pack(fill="both", expand=True)
     tree_upgrades = ttk.Treeview(tree_up_frame, columns=("Hora", "Cliente", "Descrição", "Pagamento", "Valor"), show="headings", height=10)
+    configure_zebra_tags(tree_upgrades, current_theme["name"])
     for col, txt, anchor, width in [("Hora", "Hora", "center", 120), ("Cliente", "Cliente", "w", 200), ("Descrição", "Descrição", "w", 240), ("Pagamento", "Pagamento", "center", 140), ("Valor", "Valor", "e", 120)]:
         tree_upgrades.heading(col, text=txt)
         tree_upgrades.column(col, width=width, anchor=anchor)
@@ -1517,6 +1974,7 @@ def abrir_sistema_com_logo(username, login_win):
         cursor.execute("SELECT hora, cliente, produto, pagamento, total FROM vendas WHERE data=? AND pagamento LIKE 'Upgrade%' ORDER BY hora DESC", (hoje,))
         for hora, cliente, produto, pagamento, total in cursor.fetchall():
             tree_upgrades.insert("", "end", values=(hora, cliente, produto, (pagamento or "").replace("Upgrade - ", ""), f"R$ {total:.2f}"))
+        apply_zebra(tree_upgrades)
     
     # ====== AGENDAMENTO (retirada de celulares) ======
     # UI: AGENDAMENTO
@@ -1565,6 +2023,7 @@ def abrir_sistema_com_logo(username, login_win):
     ttk.Label(ag_list_frame, text="Agendamentos do mês", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=2, pady=(0, 6))
 
     ag_tree = ttk.Treeview(ag_list_frame, columns=("Data", "Responsável"), show="headings", height=6)
+    configure_zebra_tags(ag_tree, current_theme["name"])
     ag_tree.heading("Data", text="Data")
     ag_tree.heading("Responsável", text="Responsável")
     ag_tree.column("Data", width=120, anchor="center", stretch=False)
@@ -1647,6 +2106,7 @@ def abrir_sistema_com_logo(username, login_win):
                 if len(resumo) > MAX:
                     resumo = resumo[:MAX-3] + "..."
                 ag_tree.insert("", "end", iid=str(iso), values=(_br_date_from_iso(iso), resumo))
+            apply_zebra(ag_tree)
         except Exception as ex:
             logging.error(f"Falha ao atualizar lista de agendamentos: {ex}", exc_info=True)
 
@@ -1823,6 +2283,7 @@ def abrir_sistema_com_logo(username, login_win):
         show="headings",
         selectmode="browse",
     )
+    configure_zebra_tags(tree, current_theme["name"])
     tree.heading("Código", text="Código")
     tree.heading("Nome", text="Nome")
     tree.heading("Tipo", text="Tipo")
@@ -1837,6 +2298,37 @@ def abrir_sistema_com_logo(username, login_win):
     scrollbar_est = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
     tree.configure(yscroll=scrollbar_est.set)
     scrollbar_est.pack(side="right", fill="y")
+
+
+    # ===== Legenda de cores do Estoque =====
+
+    leg_frame = ttk.Frame(aba_estoque)
+
+    leg_frame.pack(fill="x", pady=(2, 8))
+
+
+    ttk.Label(leg_frame, text="Legenda:", font=("Segoe UI", 10, "bold")).pack(side="left", padx=(6, 10))
+
+
+    def _leg_chip(parent, text, bg, fg):
+
+        chip = tk.Label(parent, text=text, bg=bg, fg=fg, font=("Segoe UI", 9, "bold"), padx=10, pady=4)
+
+        chip.pack(side="left", padx=4)
+
+        return chip
+
+
+    _leg_chip(leg_frame, "ZERADO (0)", "#7f1d1d", "white")
+
+    _leg_chip(leg_frame, "BAIXO (≤ 5)", "tomato", "black")
+
+    _leg_chip(leg_frame, "MÉDIO (6–7)", "orange", "black")
+
+    _leg_chip(leg_frame, "OK (≥ 8)", "lightgreen", "black")
+
+
+    ttk.Label(leg_frame, text="• Ordenado por menor estoque", font=("Segoe UI", 9)).pack(side="right", padx=8)
     f_est = ttk.Frame(aba_estoque, padding=(6, 8))
     f_est.pack(fill="x", pady=6)
     def make_labeled_entry(parent, label_text, width=15):
@@ -1865,23 +2357,39 @@ def abrir_sistema_com_logo(username, login_win):
     ent_preco.bind("<FocusOut>", lambda e: formatar_moeda(e, ent_preco))
     def listar_estoque():
         tree.delete(*tree.get_children())
-        # >>> Ajuste de contraste nas tags
-        tree.tag_configure("baixo",   background="tomato",     foreground="black")
-        tree.tag_configure("laranja", background="orange",     foreground="black")
-        tree.tag_configure("verde",   background="lightgreen", foreground="black")
-        for p in cursor.execute("SELECT codigo,nome,tipo,preco,estoque FROM produtos"):
-            qtd = p[4]
-            if qtd <= 5:
+        
+        # ===== Cores do estoque (SEM zebra) =====
+        # 0 = zerado (vermelho escuro)
+        tree.tag_configure("zerado", background="#7f1d1d", foreground="white")  # vermelho escuro
+        # <= 5 = baixo (vermelho)
+        tree.tag_configure("baixo", background="tomato", foreground="black")
+        # 6..7 = médio (laranja)
+        tree.tag_configure("laranja", background="orange", foreground="black")
+        # >= 8 = ok (verde)
+        tree.tag_configure("verde", background="lightgreen", foreground="black")
+        
+        # ===== Ordenação: menor estoque primeiro =====
+        # Observação: COALESCE garante que NULL vire 0
+        cursor.execute("""
+            SELECT codigo, nome, tipo, preco, COALESCE(estoque,0) as estoque
+            FROM produtos
+            ORDER BY COALESCE(estoque,0) ASC, nome ASC
+        """)
+        
+        for codigo, nome, tipo, preco, qtd in cursor.fetchall():
+            if qtd == 0:
+                tag = "zerado"
+            elif qtd <= 5:
                 tag = "baixo"
             elif 6 <= qtd <= 7:
                 tag = "laranja"
             else:
                 tag = "verde"
-            tree.insert(
-                "",
-                "end",
-                values=(p[0], p[1], p[2], f"R$ {p[3]:.2f}", qtd), tags=(tag,)
-            )
+        
+            tree.insert("", "end", values=(codigo, nome, tipo, f"R$ {float(preco):.2f}", int(qtd)), tags=(tag,))
+        
+        # NÃO aplicar zebra no estoque
+        # apply_zebra(tree)
     listar_estoque()
     btn_frame_est = ttk.Frame(aba_estoque)
     btn_frame_est.pack(fill="x", pady=(6, 0))
@@ -2009,6 +2517,7 @@ def abrir_sistema_com_logo(username, login_win):
     tree_cli = ttk.Treeview(
         frame_cli, columns=("CPF", "Nome", "Telefone"), show="headings"
     )
+    configure_zebra_tags(tree_cli, current_theme["name"])
     tree_cli.heading("CPF", text="CPF")
     tree_cli.heading("Nome", text="Nome")
     tree_cli.heading("Telefone", text="Telefone")
@@ -2071,6 +2580,7 @@ def abrir_sistema_com_logo(username, login_win):
             cursor.execute("SELECT cpf, nome, telefone FROM clientes ORDER BY nome")
         for cpf, nome, tel in cursor.fetchall():
             tree_cli.insert("", "end", values=(cpf, nome, tel))
+        apply_zebra(tree_cli)
     def _on_busca_nome(_evt=None):
         carregar_clientes_filtrado(e_busca_nome.get())
     e_busca_nome.bind("<KeyRelease>", _on_busca_nome)
@@ -2165,6 +2675,7 @@ def abrir_sistema_com_logo(username, login_win):
         variable=var_enviar_email
     )
     chk_email.grid(row=4, column=2, columnspan=2, sticky="w", padx=6)
+    add_tooltip(chk_email, "Se marcado, o sistema envia o cupom em PDF para o e-mail informado.")
     def buscar_cliente_v():
         cpf = ent_cpf_v.get().strip()
         cursor.execute("SELECT nome,telefone FROM clientes WHERE cpf=?", (cpf,))
@@ -2525,6 +3036,7 @@ def abrir_sistema_com_logo(username, login_win):
     ttk.Label(frm_saida, text="Motivo").pack(anchor="w")
     ent_motivo_cx = ttk.Entry(frm_saida, width=30)
     ent_motivo_cx.pack(anchor="w", pady=4)
+    add_tooltip(ent_motivo_cx, "Explique rapidamente o motivo desta saída (ex.: motoboy, compra de insumos, troco, etc.).")
     def registrar_saida_caixa():
         valor_text = ent_saida_cx.get().replace("R$", "").replace(",", ".").strip()
         motivo = ent_motivo_cx.get().strip()
@@ -2566,6 +3078,7 @@ def abrir_sistema_com_logo(username, login_win):
     tree_cx = ttk.Treeview(
         tree_cx_frame, columns=("Data", "Total"), show="headings", height=8
     )
+    configure_zebra_tags(tree_cx, current_theme["name"])
     tree_cx.heading("Data", text="Data")
     tree_cx.heading("Total", text="Total Fechado")
     tree_cx.column("Data", width=200, anchor="center")
@@ -2700,6 +3213,7 @@ def abrir_sistema_com_logo(username, login_win):
         ),
         show="headings",
     )
+    configure_zebra_tags(tree_m, current_theme["name"])
     for c in tree_m["columns"]:
         tree_m.heading(c, text=c)
     tree_m.column("OS", width=80, anchor="center")
@@ -2897,6 +3411,7 @@ def abrir_sistema_com_logo(username, login_win):
         show="headings",
         height=10,
     )
+    configure_zebra_tags(tree_dev, current_theme["name"])
     for col, txt, anchor, width in [
         ("Data", "Data", "center", 120),
         ("Hora", "Hora", "center", 100),
@@ -2927,6 +3442,7 @@ def abrir_sistema_com_logo(username, login_win):
         )
         for data, hora, nome, item, motivo in cursor.fetchall():
             tree_dev.insert("", "end", values=(data, hora, nome, item, motivo))
+        apply_zebra(tree_dev)
     def registrar_devolucao():
         nome = ent_nome_dev.get().strip()
         item = ent_devolucao.get().strip()
@@ -2956,24 +3472,11 @@ def abrir_sistema_com_logo(username, login_win):
     )
     carregar_devolucoes()
     # ---- Funções de UI: toast e agendador de backup ----
-    def _show_toast_backup(text: str, level: str = "info"):
+    def _show_toast_backup(text: str, level: str = 'info'):
         try:
-            colors = {
-                "info": ("#1e1e1e", "#9cdcfe"),
-                "ok": ("#103510", "#69c16b"),
-                "warn": ("#3a2b00", "#f6c453"),
-                "error": ("#3b0f0f", "#ff6b6b"),
-            }
-            bg, fg = colors.get(level, colors["info"])
-            if (
-                hasattr(root, "_toast_frame")
-                and root._toast_frame
-                and root._toast_frame.winfo_exists()
-            ):
-                try:
-                    root._toast_frame.destroy()
-                except Exception:
-                    pass
+            show_toast(root, text, level=level, duration_ms=3500, anchor='top-right', max_stack=4)
+        except Exception:
+            pass
             root._toast_frame = tk.Frame(root, bg=bg, highlightthickness=0)
             lbl = tk.Label(
                 root._toast_frame,
@@ -3018,19 +3521,41 @@ def abrir_sistema_com_logo(username, login_win):
         atualizar_caixa()
     except Exception:
         pass
-    ttk.Separator(root, orient="horizontal").pack(
-        fill="x", padx=8, pady=(2, 2), side="bottom"
-    )
-    footer_text_main = "Developed by André Mariano\n\nBeta Test"
-    ttk.Label(
-        root,
-        text=footer_text_main,
-        style="Footer.TLabel",
-        anchor="center",
-        justify="center",
-    ).pack(side="bottom", fill="x", pady=(0, 8))
-    lbl_status_backup = ttk.Label(root, text="Backup: aguardando...", anchor="center")
-    lbl_status_backup.pack(side="bottom", fill="x")
+
+    # ====== STATUS BAR (versão | backup | usuário | data/hora) ======
+    statusbar = tk.Frame(root, bg=palette['panel'], highlightbackground=palette['border'], highlightthickness=1)
+    statusbar.pack(side='bottom', fill='x')
+
+    lbl_status_left = tk.Label(statusbar, text=f"v{get_local_version()}", bg=palette['panel'], fg=palette['muted'], font=("Segoe UI", 9))
+    lbl_status_left.pack(side='left', padx=10, pady=6)
+
+    lbl_status_backup = tk.Label(statusbar, text="Backup: aguardando...", bg=palette['panel'], fg=palette['muted'], font=("Segoe UI", 9))
+    lbl_status_backup.pack(side='left', padx=10, pady=6)
+
+    lbl_status_user = tk.Label(statusbar, text=f"Usuário: {username}", bg=palette['panel'], fg=palette['muted'], font=("Segoe UI", 9))
+    lbl_status_user.pack(side='right', padx=10, pady=6)
+
+    lbl_status_clock = tk.Label(statusbar, text="", bg=palette['panel'], fg=palette['muted'], font=("Segoe UI", 9))
+    lbl_status_clock.pack(side='right', padx=10, pady=6)
+
+    def _tick_clock():
+        try:
+            now = datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+            lbl_status_clock.config(text=now)
+        except Exception:
+            pass
+        root.after(1000, _tick_clock)
+
+    _tick_clock()
+
+    def _refresh_statusbar_theme():
+        try:
+            pal = THEME_DARK if current_theme['name'] == 'dark' else THEME_LIGHT
+            statusbar.configure(bg=pal['panel'], highlightbackground=pal['border'])
+            for w in (lbl_status_left, lbl_status_backup, lbl_status_user, lbl_status_clock):
+                w.configure(bg=pal['panel'], fg=pal['muted'])
+        except Exception:
+            pass
 # ================= TELA DE LOGIN =================
 def abrir_login():
     login_win = tk.Tk()
