@@ -40,6 +40,18 @@ from email.message import EmailMessage
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 
+# ---- Gráficos para relatório mensal (matplotlib, modo headless) ----
+# O app continua funcionando mesmo sem matplotlib (gera PDF sem gráfico).
+try:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    _HAS_MPL = True
+except Exception:
+    plt = None
+    _HAS_MPL = False
+
+
 
 # ===================== VISUAL KIT (Windows 11 dark / light) =====================
 # Preferência: Modern Dark (grafite) com destaques azul/verde + toasts empilhados
@@ -206,7 +218,7 @@ def backup_bulk_dir(local_dir: str, tipo: str):
 DISABLE_AUTO_UPDATE = (
     False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "3.6"
+APP_VERSION = "3.7"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -228,6 +240,236 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
+
+# ===================== TELEGRAM NOTIFY (uso pessoal) =====================
+# Crie um arquivo telegram_config.txt na pasta do app:
+# TELEGRAM_BOT_TOKEN=xxxxx
+# TELEGRAM_CHAT_ID=8529045753
+# TELEGRAM_ENABLED=1
+# TELEGRAM_SEND_PDF=1
+# (Opcional) TELEGRAM_DEDUPE_HOURS_LOW=6
+# (Opcional) TELEGRAM_DEDUPE_HOURS_ZERO=12
+import urllib.parse
+import urllib.request
+import threading
+import time
+
+_TELEGRAM_CFG_CACHE = None
+_LAST_TG_SENT = {}  # {dedupe_key: last_ts}
+
+def _load_telegram_config():
+    """Lê telegram_config.txt (ou variáveis de ambiente)."""
+    global _TELEGRAM_CFG_CACHE
+    if _TELEGRAM_CFG_CACHE is not None:
+        return _TELEGRAM_CFG_CACHE
+    cfg = {}
+    try:
+        path = os.path.join(os.getcwd(), 'telegram_config.txt')
+        if os.path.isfile(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = (line or '').strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    if '=' in line:
+                        k, v = line.split('=', 1)
+                        cfg[k.strip()] = v.strip()
+    except Exception as ex:
+        logging.error('Falha ao ler telegram_config.txt: %s', ex)
+
+    def _get(key, default=None):
+        return cfg.get(key) or os.getenv(key) or default
+
+    token = (_get('TELEGRAM_BOT_TOKEN', '') or '').strip()
+    chat_id = (_get('TELEGRAM_CHAT_ID', '') or '').strip()
+    enabled = str(_get('TELEGRAM_ENABLED', '1')).strip().lower() not in ('0','false','no','off')
+    send_pdf = str(_get('TELEGRAM_SEND_PDF', '1')).strip().lower() not in ('0','false','no','off')
+    dedupe_low_h = int(float(_get('TELEGRAM_DEDUPE_HOURS_LOW', '6') or 6))
+    dedupe_zero_h = int(float(_get('TELEGRAM_DEDUPE_HOURS_ZERO', '12') or 12))
+
+    _TELEGRAM_CFG_CACHE = {
+        'token': token,
+        'chat_id': chat_id,
+        'enabled': enabled,
+        'send_pdf': send_pdf,
+        'dedupe_low_sec': max(60, dedupe_low_h * 3600),
+        'dedupe_zero_sec': max(60, dedupe_zero_h * 3600),
+    }
+    return _TELEGRAM_CFG_CACHE
+
+
+def telegram_notify(text: str, dedupe_key: str = None, dedupe_window_sec: int = 30):
+    """Envia mensagem Telegram em background (não trava UI)."""
+    try:
+        cfg = _load_telegram_config()
+        if not cfg.get('enabled', True):
+            return
+        token = (cfg.get('token') or '').strip()
+        chat_id = (cfg.get('chat_id') or '').strip()
+        if not token or not chat_id:
+            return
+
+        if dedupe_key:
+            now = time.time()
+            last = _LAST_TG_SENT.get(dedupe_key, 0)
+            if (now - last) < int(dedupe_window_sec):
+                return
+            _LAST_TG_SENT[dedupe_key] = now
+
+        def _send():
+            try:
+                url = f"https://api.telegram.org/bot{token}/sendMessage"
+                payload = {
+                    'chat_id': chat_id,
+                    'text': text,
+                    'parse_mode': 'HTML',
+                    'disable_web_page_preview': 'true',
+                }
+                data = urllib.parse.urlencode(payload).encode('utf-8')
+                req = urllib.request.Request(url, data=data, method='POST')
+                with urllib.request.urlopen(req, context=_SSL_CTX, timeout=10) as r:
+                    _ = r.read()
+            except Exception as ex:
+                logging.error('Erro ao enviar Telegram: %s', ex)
+
+        threading.Thread(target=_send, daemon=True).start()
+    except Exception:
+        pass
+
+
+def telegram_send_pdf(caption: str, file_path: str, dedupe_key: str = None, dedupe_window_sec: int = 30):
+    """Envia PDF para o Telegram (opcional)."""
+    try:
+        cfg = _load_telegram_config()
+        if not cfg.get('enabled', True) or not cfg.get('send_pdf', True):
+            return
+        token = (cfg.get('token') or '').strip()
+        chat_id = (cfg.get('chat_id') or '').strip()
+        if not token or not chat_id:
+            return
+        if not file_path or not os.path.isfile(file_path):
+            return
+
+        if dedupe_key:
+            now = time.time()
+            last = _LAST_TG_SENT.get(dedupe_key, 0)
+            if (now - last) < int(dedupe_window_sec):
+                return
+            _LAST_TG_SENT[dedupe_key] = now
+
+        def _send_doc():
+            try:
+                boundary = '----TGBOUNDARY1234567890'
+                url = f"https://api.telegram.org/bot{token}/sendDocument"
+                with open(file_path, 'rb') as f:
+                    file_bytes = f.read()
+
+                parts = []
+                def add_field(name, value):
+                    parts.append(f"--{boundary}\r\n".encode())
+                    parts.append(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode())
+                    parts.append((value or '').encode('utf-8'))
+                    parts.append(b"\r\n")
+
+                def add_file(name, filename, content_type, content):
+                    parts.append(f"--{boundary}\r\n".encode())
+                    parts.append(
+                        f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'
+                        f"Content-Type: {content_type}\r\n\r\n".encode()
+                    )
+                    parts.append(content)
+                    parts.append(b"\r\n")
+
+                add_field('chat_id', chat_id)
+                add_field('caption', caption or '')
+                add_file('document', os.path.basename(file_path), 'application/pdf', file_bytes)
+                parts.append(f"--{boundary}--\r\n".encode())
+                body = b''.join(parts)
+
+                req = urllib.request.Request(url, data=body, method='POST')
+                req.add_header('Content-Type', f'multipart/form-data; boundary={boundary}')
+                req.add_header('Content-Length', str(len(body)))
+                with urllib.request.urlopen(req, context=_SSL_CTX, timeout=25) as r:
+                    _ = r.read()
+            except Exception as ex:
+                logging.error('Erro ao enviar PDF no Telegram: %s', ex)
+
+        threading.Thread(target=_send_doc, daemon=True).start()
+    except Exception:
+        pass
+
+# =================== FIM TELEGRAM NOTIFY ===================
+
+# ===================== AGENDAMENTO: NOTIFICAÇÃO (hoje ao abrir) =====================
+def _meta_get(key: str, default: str = "") -> str:
+    """Lê uma chave da tabela app_meta."""
+    try:
+        cursor.execute("SELECT value FROM app_meta WHERE key=?", (key,))
+        r = cursor.fetchone()
+        if r and r[0] is not None:
+            return str(r[0])
+    except Exception:
+        pass
+    return default
+
+
+def _meta_set(key: str, value: str):
+    """Grava uma chave na tabela app_meta."""
+    try:
+        with conn:
+            cursor.execute(
+                "INSERT OR REPLACE INTO app_meta(key,value) VALUES(?,?)",
+                (key, str(value)),
+            )
+    except Exception:
+        pass
+
+
+def notify_agendamentos_hoje_once():
+    """Se houver agendamento para HOJE, envia Telegram 1x por dia (ao abrir o sistema)."""
+    try:
+        hoje = datetime.date.today()
+        iso = hoje.strftime("%Y-%m-%d")
+        meta_key = f"ag_today_notified_{iso}"
+        if _meta_get(meta_key, "0") == "1":
+            return
+
+        cursor.execute("SELECT responsavel FROM agendamentos_celulares WHERE data_iso=?", (iso,))
+        r = cursor.fetchone()
+        texto = (r[0] if r and r[0] else "").strip()
+        if not texto:
+            return
+
+        nomes = [l.strip() for l in texto.splitlines() if l.strip()]
+        qtd = len(nomes)
+        br = hoje.strftime("%d/%m/%Y")
+        lista = "\n".join(nomes)
+
+        telegram_notify(
+            f"""📅 <b>AGENDAMENTO DE HOJE</b>
+🗓 Data: {br}
+👥 Pessoas: {qtd}
+📝 Lista:
+{lista}""",
+            dedupe_key=f"ag_hoje_{iso}",
+            dedupe_window_sec=120,
+        )
+
+        _meta_set(meta_key, "1")
+    except Exception:
+        pass
+
+
+def start_agendamento_notify_on_open(root_widget):
+    """Agenda a checagem para alguns segundos após abrir o sistema."""
+    try:
+        root_widget.after(2500, notify_agendamentos_hoje_once)
+    except Exception:
+        notify_agendamentos_hoje_once()
+
+# ===================== FIM AGENDAMENTO: NOTIFICAÇÃO =====================
+
+
 # ===================== BANCO =====================
 conn = sqlite3.connect(DB_PATH)
 cursor = conn.cursor()
@@ -336,6 +578,17 @@ CREATE TABLE IF NOT EXISTS agendamentos_celulares (
 )
 conn.commit()
 
+# >>> NOVO: meta de app (flags de migração)
+cursor.execute(
+    """
+CREATE TABLE IF NOT EXISTS app_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT
+)
+"""
+)
+conn.commit()
+
 # ====== UTIL: hash de senha / migrações ======
 def hash_password(pw: str) -> str:
     return hashlib.sha256(pw.encode("utf-8")).hexdigest()
@@ -350,6 +603,36 @@ def ensure_is_admin_column():
         pass
 ensure_is_admin_column()
 
+# >>> NOVO: força troca de senha no primeiro login
+def ensure_force_password_change_column():
+    try:
+        cursor.execute("PRAGMA table_info(users)")
+        cols = [c[1] for c in cursor.fetchall()]
+        if "force_password_change" not in cols:
+            cursor.execute("ALTER TABLE users ADD COLUMN force_password_change INTEGER DEFAULT 0")
+            conn.commit()
+    except Exception:
+        pass
+
+ensure_force_password_change_column()
+
+# >>> NOVO: força troca de senha para TODOS os usuários UMA ÚNICA VEZ (primeira execução desta versão)
+def run_force_password_change_migration_once():
+    try:
+        cursor.execute("CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT)")
+        conn.commit()
+        cursor.execute("SELECT value FROM app_meta WHERE key=?", ('forced_pw_change_v1',))
+        r = cursor.fetchone()
+        if r and str(r[0] or '').strip() == '1':
+            return
+        cursor.execute("UPDATE users SET force_password_change=1")
+        cursor.execute("INSERT OR REPLACE INTO app_meta(key,value) VALUES(?,?)", ('forced_pw_change_v1','1'))
+        conn.commit()
+    except Exception:
+        pass
+
+run_force_password_change_migration_once()
+
 
 def ensure_admin_user():
     try:
@@ -359,7 +642,7 @@ def ensure_admin_user():
         if not r:
             admin_hash = hash_password("admin1234")
             cursor.execute(
-                "INSERT INTO users (username, password_hash, is_admin, password_last_changed) VALUES (?,?,1,?)",
+                "INSERT INTO users (username, password_hash, is_admin, password_last_changed, force_password_change) VALUES (?,?,1,?,1)",
                 ("admin", admin_hash, today)
             )
             cursor.execute(
@@ -424,6 +707,26 @@ def ensure_password_policy_tables():
 
 ensure_password_policy_tables()
 
+# ====== POLÍTICA DE SENHA (centralizada) ======
+PASSWORD_MIN_LEN = 8
+
+def validate_password_policy(pw: str):
+    """
+    Regras:
+    - mínimo 8 caracteres
+    - pelo menos 1 letra maiúscula (A-Z)
+    - pelo menos 1 número (0-9)
+    """
+    pw = (pw or "").strip()
+    if len(pw) < PASSWORD_MIN_LEN:
+        return False, f"A senha deve ter pelo menos {PASSWORD_MIN_LEN} caracteres."
+    if not re.search(r"[A-Z]", pw):
+        return False, "A senha deve conter pelo menos 1 letra MAIÚSCULA (A-Z)."
+    if not re.search(r"\d", pw):
+        return False, "A senha deve conter pelo menos 1 número (0-9)."
+    return True, "OK"
+
+
 # Utilitários de política de senha (30 dias + últimas 3)
 def _parse_br_date(d: str):
     try:
@@ -456,16 +759,28 @@ def password_reuse_forbidden(username: str, new_hash: str, n: int = 3) -> bool:
     return new_hash in get_last_password_hashes(username, n)
 
 def set_new_password(username: str, new_plain: str):
+    """Define nova senha aplicando política (complexidade), histórico e marcação de primeira troca."""
+    ok, msg = validate_password_policy(new_plain)
+    if not ok:
+        raise ValueError(msg)
+
     new_hash = hash_password(new_plain)
     if password_reuse_forbidden(username, new_hash, 3):
         raise ValueError("A nova senha não pode repetir nenhuma das últimas 3 senhas.")
+
     today = datetime.datetime.now().strftime("%d/%m/%Y")
     with conn:
-        cursor.execute("UPDATE users SET password_hash=?, password_last_changed=? WHERE username=?", (new_hash, today, username))
+        cursor.execute(
+            "UPDATE users SET password_hash=?, password_last_changed=?, force_password_change=0 WHERE username=?",
+            (new_hash, today, username),
+        )
         cursor.execute(
             "INSERT OR REPLACE INTO user_password_history (username, password_hash, changed_at) VALUES (?,?,?)",
-            (username, new_hash, today)
+            (username, new_hash, today),
         )
+
+
+
 def is_admin(username: str) -> bool:
     try:
         cursor.execute("SELECT is_admin FROM users WHERE username=?", (username,))
@@ -1001,7 +1316,7 @@ class ChangePasswordDialog(tk.Toplevel):
         ttk.Label(frm, text="Confirmar nova senha").pack(anchor="w")
         self.ent_conf = ttk.Entry(frm, show="*")
         self.ent_conf.pack(fill="x", pady=4)
-        ttk.Label(frm, text="Não é permitido reutilizar as últimas 3 senhas.").pack(anchor="w", pady=(6,2))
+        ttk.Label(frm, text="Regras: mínimo 8 caracteres, com 1 letra MAIÚSCULA e 1 número.\nNão é permitido reutilizar as últimas 3 senhas.").pack(anchor="w", pady=(6,2))
         btns = ttk.Frame(frm)
         btns.pack(fill="x", pady=8)
         ttk.Button(btns, text="Cancelar", command=self._cancel).pack(side="right", padx=6)
@@ -1014,8 +1329,9 @@ class ChangePasswordDialog(tk.Toplevel):
     def _save(self):
         new = (self.ent_new.get() or "").strip()
         conf = (self.ent_conf.get() or "").strip()
-        if len(new) < 6:
-            messagebox.showwarning("Atenção", "A senha deve ter pelo menos 6 caracteres.")
+        ok, msg = validate_password_policy(new)
+        if not ok:
+            messagebox.showwarning("Atenção", msg)
             return
         if new != conf:
             messagebox.showerror("Erro", "As senhas digitadas não conferem.")
@@ -1292,6 +1608,7 @@ def gerar_os_pdf(os_num, nome, cpf, telefone, descricao, valor):
     except Exception:
         pass
     bring_app_to_front()
+    return nome_arquivo
 # ================= RELATÓRIO VENDAS (PDF) =================
 def gerar_relatorio_vendas_dia_pdf(data_str: str = None):
     hoje = datetime.datetime.now().strftime("%d/%m/%Y")
@@ -1485,6 +1802,261 @@ def gerar_relatorio_vendas_dia_pdf(data_str: str = None):
             os.system(f"xdg-open '{nome_arquivo}'")
     except Exception:
         pass
+    bring_app_to_front()
+    return nome_arquivo
+
+
+# ================= RELATÓRIO VENDAS MENSAL (PDF + GRÁFICO + RANKING) =================
+def gerar_relatorio_vendas_mes_pdf(ano: int = None, mes: int = None, top_n: int = 10):
+    """Gera um relatório mensal com:
+
+    - Gráfico (barras + linha) do total de vendas por dia no mês
+    - Resumo do mês (total e por forma de pagamento)
+    - Ranking TOP N de produtos por valor vendido
+
+    Observação:
+    - Usa a tabela 'vendas' (histórico), pois o fechamento diário limpa apenas a tabela 'caixa'.
+    - Se matplotlib não estiver disponível, o PDF é gerado sem o gráfico.
+
+    Retorna o caminho do PDF.
+    """
+    hoje_dt = datetime.date.today()
+    ano = int(ano or hoje_dt.year)
+    mes = int(mes or hoje_dt.month)
+    top_n = int(top_n or 10)
+
+    pasta_rel = os.path.join(os.getcwd(), "relatorios")
+    os.makedirs(pasta_rel, exist_ok=True)
+    nome_arquivo = os.path.join(pasta_rel, f"relatorio_vendas_mensal_{ano:04d}-{mes:02d}.pdf")
+
+    mm = f"{mes:02d}"
+    yyyy = f"{ano:04d}"
+
+    # Totais por dia (data armazenada como dd/mm/aaaa)
+    cursor.execute(
+        """
+        SELECT data, COALESCE(SUM(total),0) as total_dia
+        FROM vendas
+        WHERE substr(data,4,2)=? AND substr(data,7,4)=?
+        GROUP BY data
+        """,
+        (mm, yyyy),
+    )
+    rows = cursor.fetchall() or []
+    total_por_data = {str(d): float(v or 0.0) for d, v in rows}
+
+    # Série completa do mês (dias sem venda = 0)
+    last_day = calendar.monthrange(ano, mes)[1]
+    dias = list(range(1, last_day + 1))
+    datas = [f"{d:02d}/{mes:02d}/{ano:04d}" for d in dias]
+    valores = [total_por_data.get(dt, 0.0) for dt in datas]
+    total_mes = float(sum(valores))
+
+    # Totais por forma de pagamento
+    cursor.execute(
+        """
+        SELECT pagamento, COALESCE(SUM(total),0)
+        FROM vendas
+        WHERE substr(data,4,2)=? AND substr(data,7,4)=?
+        GROUP BY pagamento
+        """,
+        (mm, yyyy),
+    )
+    pay_rows = cursor.fetchall() or []
+    totais_pg = {"PIX": 0.0, "Cartão": 0.0, "Dinheiro": 0.0, "OUTROS": 0.0}
+    for pg, tot in pay_rows:
+        k = str(pg or "").strip()
+        v = float(tot or 0.0)
+        if k.startswith("Upgrade"):
+            totais_pg["OUTROS"] += v
+        elif k in totais_pg:
+            totais_pg[k] += v
+        else:
+            totais_pg["OUTROS"] += v
+
+    # Ranking de produtos (TOP N) por valor
+    cursor.execute(
+        """
+        SELECT produto,
+               COALESCE(SUM(quantidade),0) as qtd_total,
+               COALESCE(SUM(total),0) as valor_total
+        FROM vendas
+        WHERE substr(data,4,2)=? AND substr(data,7,4)=?
+        GROUP BY produto
+        ORDER BY valor_total DESC
+        LIMIT ?
+        """,
+        (mm, yyyy, top_n),
+    )
+    ranking = cursor.fetchall() or []
+
+    # Gera gráfico (barras + linha)
+    chart_path = os.path.join(pasta_rel, f"_chart_vendas_{ano:04d}{mes:02d}.png")
+    chart_ok = False
+    try:
+        if _HAS_MPL and plt is not None:
+            xticks = dias if last_day <= 15 else list(range(1, last_day + 1, 2))
+            fig = plt.figure(figsize=(10.2, 3.8), dpi=170)
+            ax = fig.add_subplot(111)
+            ax.bar(dias, valores, color="#bfdbfe", edgecolor="#93c5fd", label="Barras (R$)")
+            ax.plot(dias, valores, marker="o", linewidth=2.2, color="#2563eb", label="Linha (R$)")
+            ax.set_title(f"Vendas por dia — {mes:02d}/{ano:04d}")
+            ax.set_xlabel("Dia do mês")
+            ax.set_ylabel("Total (R$)")
+            ax.set_xticks(xticks)
+            ax.grid(True, axis='y', alpha=0.25)
+            ax.legend(loc="upper left")
+            fig.tight_layout()
+            fig.savefig(chart_path)
+            plt.close(fig)
+            chart_ok = os.path.exists(chart_path)
+    except Exception:
+        chart_ok = False
+
+    # Monta PDF
+    c = canvas.Canvas(nome_arquivo, pagesize=A4)
+    logo_path_local = os.path.join(os.getcwd(), "logo.png")
+    if os.path.exists(logo_path_local):
+        try:
+            c.drawImage(ImageReader(logo_path_local), 40, 790, width=140, height=40,
+                        preserveAspectRatio=True, mask="auto")
+        except Exception:
+            pass
+
+    c.setFont("Helvetica-Bold", 13)
+    c.drawString(40, 770, f"Relatório Mensal de Vendas — {mes:02d}/{ano:04d}")
+    c.setFont("Helvetica", 11)
+    c.drawString(40, 752, "-" * 110)
+
+    # Resumo
+    y = 730
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(40, y, f"Total do mês: R$ {total_mes:.2f}")
+    y -= 18
+    c.setFont("Helvetica", 11)
+    c.drawString(
+        40, y,
+        f"PIX: R$ {totais_pg['PIX']:.2f}   |   Cartão: R$ {totais_pg['Cartão']:.2f}   |   "
+        f"Dinheiro: R$ {totais_pg['Dinheiro']:.2f}   |   Outros: R$ {totais_pg['OUTROS']:.2f}"
+    )
+
+    # Gráfico
+    if chart_ok:
+        try:
+            c.drawImage(ImageReader(chart_path), 40, 510, width=520, height=220,
+                        preserveAspectRatio=True, mask="auto")
+        except Exception:
+            chart_ok = False
+
+    if not chart_ok:
+        c.setFont("Helvetica", 10)
+        c.drawString(40, 690, "(Gráfico indisponível — matplotlib não encontrado. Relatório gerado sem gráfico.)")
+
+    # Ranking
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(40, 490, f"Ranking TOP {top_n} de produtos (por valor vendido)")
+    c.setFont("Helvetica", 10)
+    c.drawString(40, 478, "#")
+    c.drawString(60, 478, "Produto")
+    c.drawString(400, 478, "Qtd")
+    c.drawString(520, 478, "Valor")
+    c.drawString(40, 472, "-" * 110)
+
+    y = 456
+    c.setFont("Helvetica", 10)
+    if not ranking:
+        c.drawString(40, y, "Nenhuma venda registrada neste mês.")
+        y -= 14
+    else:
+        for idx, (produto, qtd_total, valor_total) in enumerate(ranking, start=1):
+            prod_txt = str(produto or "(sem produto)")
+            if len(prod_txt) > 48:
+                prod_txt = prod_txt[:45] + "..."
+            c.drawString(40, y, str(idx))
+            c.drawString(60, y, prod_txt)
+            c.drawRightString(455, y, str(int(qtd_total or 0)))
+            c.drawRightString(590, y, f"R$ {float(valor_total or 0.0):.2f}")
+            y -= 14
+            if y < 110:
+                c.showPage()
+                if os.path.exists(logo_path_local):
+                    try:
+                        c.drawImage(ImageReader(logo_path_local), 40, 790, width=140, height=40,
+                                    preserveAspectRatio=True, mask="auto")
+                    except Exception:
+                        pass
+                c.setFont("Helvetica-Bold", 13)
+                c.drawString(40, 770, f"Relatório Mensal de Vendas — {mes:02d}/{ano:04d} (continuação)")
+                c.setFont("Helvetica", 11)
+                c.drawString(40, 752, "-" * 110)
+                c.setFont("Helvetica-Bold", 11)
+                c.drawString(40, 730, f"Ranking TOP {top_n} de produtos (por valor vendido)")
+                c.setFont("Helvetica", 10)
+                c.drawString(40, 718, "#")
+                c.drawString(60, 718, "Produto")
+                c.drawString(400, 718, "Qtd")
+                c.drawString(520, 718, "Valor")
+                c.drawString(40, 712, "-" * 110)
+                y = 696
+
+    # Totais por dia (tabela)
+    if y < 140:
+        c.showPage()
+        if os.path.exists(logo_path_local):
+            try:
+                c.drawImage(ImageReader(logo_path_local), 40, 790, width=140, height=40,
+                            preserveAspectRatio=True, mask="auto")
+            except Exception:
+                pass
+        c.setFont("Helvetica-Bold", 13)
+        c.drawString(40, 770, f"Relatório Mensal de Vendas — {mes:02d}/{ano:04d} (totais por dia)")
+        c.setFont("Helvetica", 11)
+        c.drawString(40, 752, "-" * 110)
+        y = 730
+
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(40, y, "Totais por dia")
+    y -= 12
+    c.setFont("Helvetica", 10)
+    c.drawString(40, y, "Data")
+    c.drawString(160, y, "Total")
+    y -= 6
+    c.drawString(40, y, "-" * 110)
+    y -= 14
+
+    for dt, val in zip(datas, valores):
+        c.drawString(40, y, dt)
+        c.drawRightString(220, y, f"R$ {float(val):.2f}")
+        y -= 14
+        if y < 60:
+            c.showPage()
+            y = 780
+
+    c.save()
+
+    # Limpa png temporário
+    try:
+        if chart_ok and os.path.exists(chart_path):
+            os.remove(chart_path)
+    except Exception:
+        pass
+
+    try:
+        backup_pdf(nome_arquivo, "relatorios")
+    except Exception:
+        pass
+
+    try:
+        sistema = platform.system()
+        if sistema == "Windows":
+            os.startfile(nome_arquivo)
+        elif sistema == "Darwin":
+            os.system(f"open '{nome_arquivo}'")
+        else:
+            os.system(f"xdg-open '{nome_arquivo}'")
+    except Exception:
+        pass
+
     bring_app_to_front()
     return nome_arquivo
 # ================= FORMATAÇÃO CPF/TELEFONE/MOEDA =================
@@ -1868,7 +2440,22 @@ def abrir_sistema_com_logo(username, login_win):
                 cursor.execute("INSERT INTO caixa(valor,data,hora,motivo) VALUES (?,?,?,?)", (valor, data, hora, (f"Upgrade - {ent_pg_u.get().strip()}" if ent_pg_u.get().strip() else "Upgrade")))
                 cursor.execute("INSERT OR IGNORE INTO clientes(cpf,nome,telefone) VALUES (?,?,?)", (cpf, cliente, telefone))
             try:
-                gerar_cupom(cliente, descricao, 1, (ent_pg_u.get().strip() or "Upgrade"), valor)
+                caminho_pdf = gerar_cupom(cliente, descricao, 1, (ent_pg_u.get().strip() or "Upgrade"), valor)
+
+                try:
+                    telegram_notify(f"""🆙 <b>UPGRADE REGISTRADO</b>
+                👤 Cliente: {cliente}
+                📞 Tel: {telefone}
+                📝 Desc: {descricao}
+                💳 {ent_pg_u.get().strip() or 'Upgrade'}
+                💰 Total: R$ {valor:.2f}
+                🕒 {data} {hora}""", dedupe_key=f"upgrade_{data}_{hora}_{cpf}", dedupe_window_sec=30)
+                except Exception:
+                    pass
+                try:
+                    telegram_send_pdf("🧾 Cupom do upgrade", caminho_pdf, dedupe_key=f"cupom_upgrade_{data}_{hora}_{cpf}", dedupe_window_sec=60)
+                except Exception:
+                    pass
             except Exception:
                 pass
             messagebox.showinfo("Upgrade", f"Upgrade registrado! Total: R$ {valor:.2f}")
@@ -2286,6 +2873,9 @@ def abrir_sistema_com_logo(username, login_win):
     # Carrega ao iniciar
     refresh_agendamento_calendar()
 
+
+    # Notifica no Telegram se houver agendamento para HOJE (ao abrir)
+    start_agendamento_notify_on_open(root)
 # ====== ESTOQUE ======
     est_top = ttk.Frame(aba_estoque)
     est_top.pack(fill="both", expand=True)
@@ -2400,6 +2990,19 @@ def abrir_sistema_com_logo(username, login_win):
             else:
                 tag = "verde"
         
+
+            try:
+                cfg_tg = _load_telegram_config()
+                if int(qtd) == 0:
+                    telegram_notify(f"""⛔ <b>ESTOQUE ZERADO</b>
+            📦 Produto: {nome}
+            🔢 Qtd: {qtd}""", dedupe_key=f"stock_zero_{codigo}", dedupe_window_sec=int(cfg_tg.get('dedupe_zero_sec', 43200)))
+                elif int(qtd) <= 5:
+                    telegram_notify(f"""⚠️ <b>ESTOQUE BAIXO</b>
+            📦 Produto: {nome}
+            🔢 Qtd: {qtd}""", dedupe_key=f"stock_low_{codigo}", dedupe_window_sec=int(cfg_tg.get('dedupe_low_sec', 21600)))
+            except Exception:
+                pass
             tree.insert("", "end", values=(codigo, nome, tipo, f"R$ {float(preco):.2f}", int(qtd)), tags=(tag,))
         
         # NÃO aplicar zebra no estoque
@@ -2772,6 +3375,21 @@ def abrir_sistema_com_logo(username, login_win):
             # Gerar cupom e enviar por e-mail, se marcado
             try:
                 caminho_pdf = gerar_cupom(cliente or "", nome_prod, qtd, pagamento or "", total)
+
+                try:
+                    telegram_notify(f"""✅ <b>VENDA REALIZADA</b>
+                👤 Cliente: {cliente}
+                📦 Produto: {nome_prod}
+                🔢 Qtd: {qtd}
+                💳 Pagamento: {pagamento}
+                💰 Total: R$ {total:.2f}
+                🕒 {data} {hora}""", dedupe_key=f"venda_{data}_{hora}_{codigo}", dedupe_window_sec=15)
+                except Exception:
+                    pass
+                try:
+                    telegram_send_pdf("🧾 Cupom da venda", caminho_pdf, dedupe_key=f"cupom_venda_{data}_{hora}_{codigo}", dedupe_window_sec=30)
+                except Exception:
+                    pass
                 # valida o caminho do PDF antes de enviar
                 if not caminho_pdf or not os.path.isfile(caminho_pdf):
                     try:
@@ -2980,6 +3598,18 @@ def abrir_sistema_com_logo(username, login_win):
 
             messagebox.showinfo("OK", "Venda excluída e valor estornado do caixa.")
 
+            try:
+                telegram_notify(f"""❌ <b>VENDA EXCLUÍDA (ESTORNO)</b>
+            🧾 ID: {_id}
+            👤 Cliente: {cliente_v}
+            📦 Produto: {produto}
+            🔢 Qtd: {qtd}
+            💰 Estorno: R$ {float(total):.2f}
+            📅 Data: {data_v}
+            🕒 Hora original: {hora_v}""", dedupe_key=f"estorno_{_id}", dedupe_window_sec=300)
+            except Exception:
+                pass
+
         except Exception as ex:
             logging.error("Falha ao excluir venda", exc_info=True)
             messagebox.showerror("Erro", f"Falha ao excluir venda\n{ex}")
@@ -3158,6 +3788,34 @@ def abrir_sistema_com_logo(username, login_win):
                 )
             # 2) Gera o PDF com VENDAS e SAÍDAS (os dados ainda estão na tabela 'caixa')
             pdf_path = gerar_relatorio_vendas_dia_pdf(data_str=hoje)
+
+            try:
+                telegram_notify(f"""🔒 <b>CAIXA FECHADO</b>
+            📅 Data: {hoje}
+            💰 Total do dia: R$ {total:.2f}
+            📄 Relatórios gerados ✅""", dedupe_key=f"fechamento_{hoje}", dedupe_window_sec=60)
+            except Exception:
+                pass
+            try:
+                telegram_send_pdf(f"📄 Relatório do dia {hoje}", pdf_path, dedupe_key=f"rel_dia_{hoje}", dedupe_window_sec=120)
+            except Exception:
+                pass
+            try:
+                if pdf_mes:
+                    telegram_send_pdf(f"📊 Relatório mensal {hoje[-7:]}", pdf_mes, dedupe_key=f"rel_mes_{hoje[-7:]}", dedupe_window_sec=600)
+            except Exception:
+                pass
+
+            # 2.1) Se for o ÚLTIMO DIA do mês, gera também o relatório MENSAL (gráfico + ranking)
+            pdf_mes = None
+            try:
+                now = datetime.datetime.now()
+                last_day = calendar.monthrange(now.year, now.month)[1]
+                if now.day == last_day:
+                    pdf_mes = gerar_relatorio_vendas_mes_pdf(now.year, now.month)
+            except Exception as ex:
+                logging.error(f"Falha ao gerar relatório mensal: {ex}", exc_info=True)
+
             # 3) Backups automáticos (banco, cupons, OS, relatórios)
             try:
                 backup_banco()
@@ -3302,6 +3960,19 @@ def abrir_sistema_com_logo(username, login_win):
             )
         os_num = cursor.lastrowid
         gerar_os_pdf(os_num, nome, cpf, telefone, desc, valor)
+
+        try:
+            caminho_os_pdf = os.path.join(os.getcwd(), 'OS', f"OS_{os_num}.pdf")
+            telegram_notify(f"""🧾 <b>NOVA OS REGISTRADA</b>
+        🧾 OS Nº: {os_num}
+        👤 Cliente: {nome}
+        📞 Tel: {telefone}
+        📝 Desc: {desc}
+        💰 Valor: R$ {valor:.2f}
+        📅 Data: {data}""", dedupe_key=f"os_nova_{os_num}", dedupe_window_sec=120)
+            telegram_send_pdf(f"🧾 OS Nº {os_num}", caminho_os_pdf, dedupe_key=f"os_pdf_{os_num}", dedupe_window_sec=300)
+        except Exception:
+            pass
         carregar_manutencao()
         ent_cpf_m.delete(0, "end")
         ent_nome_m.config(state="normal")
@@ -3359,6 +4030,14 @@ def abrir_sistema_com_logo(username, login_win):
         valor, aprovado = r
         if aprovado == 1:
             messagebox.showinfo("Info", f"A OS {os_num} já foi aprovada.")
+
+            try:
+                telegram_notify(f"""🛠️ <b>OS APROVADA</b>
+            🧾 OS Nº: {os_num}
+            💰 Valor: R$ {valor:.2f}
+            🕒 {hoje} {hora}""", dedupe_key=f"os_aprovada_{os_num}", dedupe_window_sec=300)
+            except Exception:
+                pass
             return
         if valor <= 0:
             messagebox.showwarning("Atenção", "Valor inválido para aprovar.")
@@ -3475,6 +4154,15 @@ def abrir_sistema_com_logo(username, login_win):
                     (item, motivo, nome, data, hora),
                 )
             messagebox.showinfo("Devolução", "Devolução registrada com sucesso!")
+
+            try:
+                telegram_notify(f"""↩️ <b>DEVOLUÇÃO</b>
+            👤 Nome: {nome}
+            📦 Item: {item}
+            📝 Motivo: {motivo}
+            🕒 {data} {hora}""", dedupe_key=f"devolucao_{data}_{hora}_{item}", dedupe_window_sec=60)
+            except Exception:
+                pass
             ent_nome_dev.delete(0, "end")
             ent_devolucao.delete(0, "end")
             ent_motivo_dev.delete(0, "end")
@@ -3721,7 +4409,7 @@ def abrir_login():
             messagebox.showwarning("Atenção", "Informe usuário e senha")
             return
 
-        cursor.execute("SELECT password_hash FROM users WHERE username=?", (user,))
+        cursor.execute("SELECT password_hash, COALESCE(force_password_change,0), COALESCE(password_last_changed,'') FROM users WHERE username=?", (user,))
         r = cursor.fetchone()
         if not r:
             messagebox.showerror("Erro", "Usuário não encontrado")
@@ -3734,6 +4422,14 @@ def abrir_login():
                 _clear_remembered_user()
 
             must_change = False
+            try:
+                force_first = int(r[1] or 0) == 1
+                last_changed = (r[2] or '').strip()
+                if force_first or (not last_changed):
+                    must_change = True
+            except Exception:
+                must_change = True
+
             try:
                 if is_admin(user) and days_since_last_change(user) >= 30:
                     must_change = True
