@@ -37,7 +37,6 @@ from functools import partial
 from reportlab.lib.pagesizes import A4
 import smtplib
 from email.message import EmailMessage
-import os
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 
@@ -89,7 +88,6 @@ def _load_email_config():
     """Lê email_config.txt (chaves: EMAIL_GMAIL, EMAIL_GMAIL_APP)."""
     cfg = {}
     try:
-        import os
         path = os.path.join(os.getcwd(), "email_config.txt")
         if os.path.isfile(path):
             with open(path, "r", encoding="utf-8") as f:
@@ -111,10 +109,6 @@ def enviar_cupom_email(destinatario_email, caminho_pdf):
     """Envia o cupom por e-mail usando Gmail.
     Retorna (True, "OK") em caso de sucesso; em falha retorna (False, mensagem_detalhada)."""
     try:
-        import smtplib
-        from email.message import EmailMessage
-        import datetime
-        import os
         if not destinatario_email or "@" not in destinatario_email:
             msg = "E-mail do destinatário vazio ou inválido."
             logging.error(msg)
@@ -209,10 +203,10 @@ def backup_bulk_dir(local_dir: str, tipo: str):
     except Exception as ex:
         logging.error(f"Falha no backup em lote: {ex}", exc_info=True)
 # ===================== CONFIGURAÇÕES =====================
-DISABLE_AUTO_UPDATE = DISABLE_AUTO_UPDATE = (
+DISABLE_AUTO_UPDATE = (
     False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "3.5"
+APP_VERSION = "3.6"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -220,6 +214,12 @@ VERSION_FILE = "VERSION"
 DB_PATH = "besim_company.db"
 IGNORE_FILES = {"besim_company.db"}
 IGNORE_DIRS = {"cupons", "relatorios", "OS", "__pycache__", ".git"}
+# Caminho base para backups (Google Drive).
+# NÃO altera a lógica de backup existente; apenas define o caminho caso não exista.
+# Você pode definir via variável de ambiente GOOGLE_DRIVE_BACKUP.
+# Caso não definido, será usado um diretório local dentro da pasta do app.
+GOOGLE_DRIVE_BACKUP = os.getenv("GOOGLE_DRIVE_BACKUP") or os.path.join(os.getcwd(), "google_drive_backup")
+
 # ===================== LOG =====================
 LOG_FILE = "sistema_loja_errors.log"
 logging.basicConfig(
@@ -357,7 +357,7 @@ def ensure_admin_user():
         r = cursor.fetchone()
         today = datetime.datetime.now().strftime("%d/%m/%Y")
         if not r:
-            admin_hash = hash_password("admin123")
+            admin_hash = hash_password("admin1234")
             cursor.execute(
                 "INSERT INTO users (username, password_hash, is_admin, password_last_changed) VALUES (?,?,1,?)",
                 ("admin", admin_hash, today)
@@ -1075,43 +1075,58 @@ def baixar_e_extrair(splash: SplashScreen, remote_version: str):
     zip_url = f"https://github.com/{OWNER}/{REPO}/archive/refs/heads/{BRANCH}.zip"
     temp_dir = tempfile.mkdtemp(prefix="update_")
     zip_path = os.path.join(temp_dir, "repo.zip")
-    splash.set_status("Baixando atualização...")
-    splash.set_progress(5)
-    with urllib.request.urlopen(zip_url, context=_SSL_CTX) as response:
-        total = int(response.headers.get("Content-Length", 0))
-        downloaded = 0
-        with open(zip_path, "wb") as out:
-            while True:
-                data = response.read(8192)
-                if not data:
-                    break
-                out.write(data)
-                downloaded += len(data)
-                if total:
-                    splash.set_progress(5 + int((downloaded / total) * 60))
-    splash.set_status("Extraindo arquivos...")
-    splash.set_progress(70)
-    with zipfile.ZipFile(zip_path, "r") as z:
-        z.extractall(temp_dir)
-    splash.set_status("Copiando nova versão...")
-    splash.set_progress(85)
-    src_dir = next(os.scandir(temp_dir)).path
-    for root_dir, dirs, files in os.walk(src_dir):
-        dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
-        rel = os.path.relpath(root_dir, src_dir)
-        dest = os.path.join(os.getcwd(), rel)
-        os.makedirs(dest, exist_ok=True)
-        for f in files:
-            if f not in IGNORE_FILES:
-                shutil.copy2(os.path.join(root_dir, f), os.path.join(dest, f))
-    # Garante que a versão local fique igual à remota
     try:
-        with open(VERSION_FILE, "w", encoding="utf-8") as vf:
-            vf.write(remote_version)
-    except Exception:
-        pass
-    splash.set_status("Finalizando...")
-    splash.set_progress(100)
+        splash.set_status("Baixando atualização...")
+        splash.set_progress(5)
+        with urllib.request.urlopen(zip_url, context=_SSL_CTX) as response:
+            total = int(response.headers.get("Content-Length", 0))
+            downloaded = 0
+            with open(zip_path, "wb") as out:
+                while True:
+                    data = response.read(8192)
+                    if not data:
+                        break
+                    out.write(data)
+                    downloaded += len(data)
+                    if total:
+                        splash.set_progress(5 + int((downloaded / total) * 60))
+        splash.set_status("Extraindo arquivos...")
+        splash.set_progress(70)
+        with zipfile.ZipFile(zip_path, "r") as z:
+            z.extractall(temp_dir)
+        splash.set_status("Copiando nova versão...")
+        splash.set_progress(85)
+        # Seleciona a pasta extraída (ignora arquivos como repo.zip)
+        dirs_extracted = [e for e in os.scandir(temp_dir) if e.is_dir()]
+        if not dirs_extracted:
+            raise RuntimeError("Nenhum diretório extraído encontrado no update.")
+        prefer = None
+        for e in dirs_extracted:
+            if e.name.startswith(f"{REPO}-"):
+                prefer = e.path
+                break
+        src_dir = prefer or dirs_extracted[0].path
+        for root_dir, dirs, files in os.walk(src_dir):
+            dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
+            rel = os.path.relpath(root_dir, src_dir)
+            dest = os.path.join(os.getcwd(), rel)
+            os.makedirs(dest, exist_ok=True)
+            for f in files:
+                if f not in IGNORE_FILES:
+                    shutil.copy2(os.path.join(root_dir, f), os.path.join(dest, f))
+        # Garante que a versão local fique igual à remota
+        try:
+            with open(VERSION_FILE, "w", encoding="utf-8") as vf:
+                vf.write(remote_version)
+        except Exception:
+            pass
+        splash.set_status("Finalizando...")
+        splash.set_progress(100)
+    finally:
+        try:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        except Exception:
+            pass
 def check_and_update_after_login(master: tk.Misc) -> bool:
     """Retorna True se atualizar (e reiniciar), False caso contrário."""
     if DISABLE_AUTO_UPDATE:
@@ -1153,7 +1168,6 @@ def check_and_update_after_login(master: tk.Misc) -> bool:
             splash.update()
         except Exception:
             pass
-        master.mainloop()
         return True
     except Exception as e:
         logging.error(f"Falha na atualização automática: {e}", exc_info=True)
@@ -3473,30 +3487,16 @@ def abrir_sistema_com_logo(username, login_win):
     carregar_devolucoes()
     # ---- Funções de UI: toast e agendador de backup ----
     def _show_toast_backup(text: str, level: str = 'info'):
+        """Toast de backup (não interfere na lógica de backup)."""
         try:
             show_toast(root, text, level=level, duration_ms=3500, anchor='top-right', max_stack=4)
         except Exception:
-            pass
-            root._toast_frame = tk.Frame(root, bg=bg, highlightthickness=0)
-            lbl = tk.Label(
-                root._toast_frame,
-                text=text,
-                bg=bg,
-                fg=fg,
-                font=("Segoe UI", 10, "bold"),
-            )
-            lbl.pack(padx=10, pady=6)
-            root._toast_frame.place(relx=0.5, rely=0.02, anchor="n")
-            root.after(
-                5000,
-                lambda: (
-                    root._toast_frame.destroy()
-                    if root._toast_frame.winfo_exists()
-                    else None
-                ),
-            )
-        except Exception:
-            pass
+            # Fallback minimalista (sem variáveis soltas bg/fg)
+            try:
+                messagebox.showinfo('Backup', text)
+            except Exception:
+                pass
+
     def _backup_timer_tick():
         """Executa os backups e reprograma o próximo disparo (30 min)."""
         try:
@@ -3834,4 +3834,3 @@ if __name__ == "__main__":
             pass
 
 
-# ================= ENVIO DE CUPOM POR E-MAIL ================= 
