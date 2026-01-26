@@ -218,7 +218,7 @@ def backup_bulk_dir(local_dir: str, tipo: str):
 DISABLE_AUTO_UPDATE = (
     False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "3.7"
+APP_VERSION = "3.8"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -3840,7 +3840,7 @@ def abrir_sistema_com_logo(username, login_win):
         footer_cx.pack(side="bottom", fill="x")
         ttk.Label(
             footer_cx,
-            text="Obrigado meu Deus",
+            text="Obrigado meu Deus 🙏🏼",
             style="Footer.TLabel",
             anchor="e",
             justify="right"
