@@ -218,7 +218,7 @@ def backup_bulk_dir(local_dir: str, tipo: str):
 DISABLE_AUTO_UPDATE = (
     False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "3.9"
+APP_VERSION = "4.0"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -3680,16 +3680,44 @@ def abrir_sistema_com_logo(username, login_win):
     ttk.Label(frm_saida, text="Motivo").pack(anchor="w")
     ent_motivo_cx = ttk.Entry(frm_saida, width=30)
     ent_motivo_cx.pack(anchor="w", pady=4)
-    add_tooltip(ent_motivo_cx, "Explique rapidamente o motivo desta saída (ex.: motoboy, compra de insumos, troco, etc.).")
+    add_tooltip(ent_motivo_cx, "Explique rapidamente o motivo desta saída (ex.: motoboy, compra de insumos, troco, etc.)")
+
+    # ------------ EMOJIS PARA SAÍDAS DE CAIXA ------------
+    def _emoji_saida(motivo: str) -> str:
+        """Retorna um emoji adequado para o motivo da saída."""
+        if not motivo:
+            return "💸"
+
+        m = motivo.lower()
+
+        if "uber" in m or "corrida" in m or "transporte" in m:
+            return "🚗"
+        if "lanche" in m or "comida" in m or "almoço" in m or "almoco" in m:
+            return "🍔"
+        if "motoboy" in m or "entrega" in m or "delivery" in m:
+            return "🏍️"
+        if "insumo" in m or "material" in m or "compra" in m:
+            return "📦"
+        if "troco" in m:
+            return "💵"
+        if "pagamento" in m or "pagar" in m or "boleto" in m:
+            return "💲"
+        if "manutenção" in m or "manutencao" in m or "conserto" in m or "reparo" in m:
+            return "🛠️"
+
+        return "💸"
     def registrar_saida_caixa():
         valor_text = ent_saida_cx.get().replace("R$", "").replace(",", ".").strip()
         motivo = ent_motivo_cx.get().strip()
+
         if not valor_text:
             messagebox.showwarning("Atenção", "Informe o valor da saída")
             return
+
         if not motivo:
             messagebox.showwarning("Atenção", "Informe o motivo da saída")
             return
+
         try:
             valor = float(valor_text)
             if valor <= 0:
@@ -3697,19 +3725,41 @@ def abrir_sistema_com_logo(username, login_win):
                     "Atenção", "Informe um valor positivo para a saída"
                 )
                 return
+
             hoje = datetime.datetime.now().strftime("%d/%m/%Y")
             hora = datetime.datetime.now().strftime("%H:%M:%S")
+
             with conn:
                 cursor.execute(
                     "INSERT INTO caixa(valor,data,hora,motivo) VALUES (?,?,?,?)",
                     (-valor, hoje, hora, motivo),
                 )
+
             ent_saida_cx.delete(0, "end")
             ent_motivo_cx.delete(0, "end")
+
             atualizar_caixa()
+
             messagebox.showinfo(
                 "Saída", f"Saída de R$ {valor:.2f} registrada com sucesso"
             )
+
+            # ----------- ENVIO TELEGRAM -----------
+            try:
+                emoji = _emoji_saida(motivo)
+                telegram_notify(
+                    f"""{emoji} <b>SAÍDA DE CAIXA REGISTRADA</b>
+💸 Valor: R$ {valor:.2f}
+📝 Motivo: {motivo}
+🗓️ Data: {hoje}
+⏰ Hora: {hora}""",
+                    dedupe_key=f"saida_{hoje}_{hora}_{valor}",
+                    dedupe_window_sec=30
+                )
+            except Exception:
+                # Não quebra a UX se o Telegram falhar
+                pass
+
         except ValueError:
             messagebox.showerror("Erro", "Valor inválido")
     ttk.Button(caixa_ops, text="Registrar Saída", command=registrar_saida_caixa).pack(
@@ -3969,7 +4019,7 @@ def abrir_sistema_com_logo(username, login_win):
         📞 Tel: {telefone}
         📝 Desc: {desc}
         💰 Valor: R$ {valor:.2f}
-        📅 Data: {data}""", dedupe_key=f"os_nova_{os_num}", dedupe_window_sec=120)
+        📅 🕒 {data} {datetime.datetime.now().strftime("%H:%M:%S")}""", dedupe_key=f"os_nova_{os_num}", dedupe_window_sec=120)
             telegram_send_pdf(f"🧾 OS Nº {os_num}", caminho_os_pdf, dedupe_key=f"os_pdf_{os_num}", dedupe_window_sec=300)
         except Exception:
             pass
@@ -4528,5 +4578,4 @@ if __name__ == "__main__":
             )
         except Exception:
             pass
-
 
