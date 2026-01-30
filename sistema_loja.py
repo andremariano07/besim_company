@@ -39,6 +39,7 @@ import smtplib
 from email.message import EmailMessage
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
+import subprocess
 
 # ---- Gráficos para relatório mensal (matplotlib, modo headless) ----
 # O app continua funcionando mesmo sem matplotlib (gera PDF sem gráfico).
@@ -87,6 +88,57 @@ THEME_LIGHT = {
     "warn": "#d97706",
     "danger": "#dc2626",
 }
+
+
+# ===================== SOM AGRADÁVEL (boas-vindas pós-login) =====================
+def tocar_som_agradavel(path_wav: str = None):
+    """
+    Toca um som agradável de boas-vindas.
+    - Se 'path_wav' existir, toca o WAV.
+    - Se não existir ou falhar, usa um beep suave como fallback.
+    Suporta Windows (winsound), macOS (afplay) e Linux (paplay/aplay).
+    """
+    try:
+        if not path_wav:
+            path_wav = os.path.join(os.getcwd(), "media", "welcome.wav")
+        if os.path.isfile(path_wav):
+            sistema = platform.system()
+            if sistema == "Windows":
+                try:
+                    import winsound
+                    winsound.PlaySound(path_wav, winsound.SND_FILENAME | winsound.SND_ASYNC)
+                    return
+                except Exception:
+                    pass
+            elif sistema == "Darwin":
+                try:
+                    subprocess.Popen(["afplay", path_wav], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    return
+                except Exception:
+                    pass
+            else:
+                for player in (["paplay", path_wav], ["aplay", path_wav]):
+                    try:
+                        subprocess.Popen(player, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        return
+                    except Exception:
+                        continue
+        try:
+            root_tmp = tk._default_root
+            if root_tmp and root_tmp.winfo_exists():
+                root_tmp.bell()
+                return
+        except Exception:
+            pass
+        try:
+            if platform.system() == "Windows":
+                import winsound
+                winsound.Beep(880, 120)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
 
 BASE_FONT = ("Segoe UI", 10)
 HEADING_FONT = ("Segoe UI", 11, "bold")
@@ -218,7 +270,7 @@ def backup_bulk_dir(local_dir: str, tipo: str):
 DISABLE_AUTO_UPDATE = (
     False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "4.0"
+APP_VERSION = "4.1"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -780,6 +832,29 @@ def set_new_password(username: str, new_plain: str):
         )
 
 
+
+
+# ====== Criação de usuário restrita a ADMIN ======
+def create_user_admin(current_user: str, new_username: str, new_password_plain: str, make_admin: int = 0):
+    """Cria novo usuário *apenas* se current_user for admin.
+    Aplica política de senha, marca force_password_change=1 no novo usuário
+    e registra no histórico de senhas."""
+    if not is_admin(current_user):
+        raise PermissionError("Apenas administradores podem criar usuários.")
+    ok, msg = validate_password_policy(new_password_plain)
+    if not ok:
+        raise ValueError(msg)
+    new_hash = hash_password(new_password_plain)
+    today = datetime.datetime.now().strftime("%d/%m/%Y")
+    with conn:
+        cursor.execute(
+            "INSERT INTO users (username, password_hash, is_admin, password_last_changed, force_password_change) VALUES (?,?,?,?,1)",
+            (new_username, new_hash, int(make_admin), today)
+        )
+        cursor.execute(
+            "INSERT OR REPLACE INTO user_password_history (username, password_hash, changed_at) VALUES (?,?,?)",
+            (new_username, new_hash, today)
+        )
 
 def is_admin(username: str) -> bool:
     try:
@@ -1350,6 +1425,55 @@ class ChangePasswordDialog(tk.Toplevel):
         self.destroy()
 
 # Helper para alternar tela cheia (F11) e sair (Esc)
+
+# ====== Diálogo de Administração de Usuários (apenas admin logado) ======
+class UserAdminDialog(tk.Toplevel):
+    def __init__(self, master, current_admin: str):
+        super().__init__(master)
+        self.title("Gerenciar Usuários")
+        self.resizable(False, False)
+        self.current_admin = current_admin
+        try:
+            self.transient(master)
+            self.grab_set()
+        except Exception:
+            pass
+        frm = ttk.Frame(self, padding=12)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="Novo usuário").grid(row=0, column=0, sticky="w")
+        self.ent_user = ttk.Entry(frm, width=28)
+        self.ent_user.grid(row=0, column=1, padx=6, pady=4)
+        ttk.Label(frm, text="Senha inicial").grid(row=1, column=0, sticky="w")
+        self.ent_pass = ttk.Entry(frm, width=28, show="*")
+        self.ent_pass.grid(row=1, column=1, padx=6, pady=4)
+        self.var_admin = tk.IntVar(value=0)
+        ttk.Checkbutton(frm, text="Conceder perfil de administrador", variable=self.var_admin).grid(row=2, column=1, sticky="w", pady=(2,8))
+        btns = ttk.Frame(frm); btns.grid(row=3, column=0, columnspan=2, sticky="e")
+        ttk.Button(btns, text="Cancelar", style="Secondary.TButton", command=self.destroy).pack(side="right", padx=6)
+        ttk.Button(btns, text="Criar usuário", style="Success.TButton", command=self._criar).pack(side="right", padx=6)
+        self.bind("<Return>", lambda e: self._criar())
+    def _criar(self):
+        novo = (self.ent_user.get() or "").strip()
+        pw = (self.ent_pass.get() or "").strip()
+        want_admin = 1 if self.var_admin.get() == 1 else 0
+        if not novo or not pw:
+            messagebox.showwarning("Atenção", "Informe usuário e senha.")
+            return
+        ok, msg = validate_password_policy(pw)
+        if not ok:
+            messagebox.showwarning("Atenção", msg)
+            return
+        try:
+            create_user_admin(self.current_admin, novo, pw, want_admin)
+            messagebox.showinfo("OK", "Usuário criado com sucesso!")
+            self.destroy()
+        except PermissionError as pe:
+            messagebox.showerror("Permissão", str(pe))
+        except sqlite3.IntegrityError:
+            messagebox.showerror("Erro", "Usuário já existe.")
+        except Exception as ex:
+            messagebox.showerror("Erro", f"Falha ao criar usuário\n{ex}")
+
 def _bind_fullscreen_shortcuts(win: tk.Misc):
     if not hasattr(win, "_is_fullscreen"):
         win._is_fullscreen = False
@@ -2116,6 +2240,13 @@ def abrir_sistema_com_logo(username, login_win):
             return # app será reiniciado
     except Exception:
         pass
+
+    # 🔊 Som de boas-vindas ~200ms após a janela subir (não bloqueia a UI)
+    try:
+        root.after(200, lambda: tocar_som_agradavel(os.path.join("media", "welcome.wav")))
+    except Exception:
+        pass
+
     closing_state = {"mode": None}
 
     def on_close():
@@ -2204,6 +2335,31 @@ def abrir_sistema_com_logo(username, login_win):
         root.wait_window(dlg)
 
     menu_sessao.add_command(label="Alterar senha…", command=alterar_senha)
+
+    # >>> Gestão de Usuários (somente admin)
+
+    def abrir_gerenciar_usuarios():
+
+        if not is_admin(username):
+
+            messagebox.showerror("Permissão negada", "Apenas administradores podem gerenciar usuários.")
+
+            return
+
+        UserAdminDialog(root, current_admin=username)
+
+
+    if is_admin(username):
+
+        try:
+
+            menu_sessao.add_separator()
+
+            menu_sessao.add_command(label="Usuários (Admin)…", command=abrir_gerenciar_usuarios)
+
+        except Exception:
+
+            pass
     menu_sessao.add_command(label="Logout", accelerator="Ctrl+L", command=do_logout)
     menu_sessao.add_separator()
     menu_sessao.add_command(label="Sair", accelerator="Ctrl+Q", command=do_quit)
@@ -3381,7 +3537,7 @@ def abrir_sistema_com_logo(username, login_win):
                 👤 Cliente: {cliente}
                 📦 Produto: {nome_prod}
                 🔢 Qtd: {qtd}
-                💳 Pagamento: {pagamento}
+                💳 Forma de Pagamento: {pagamento}
                 💰 Total: R$ {total:.2f}
                 🕒 {data} {hora}""", dedupe_key=f"venda_{data}_{hora}_{codigo}", dedupe_window_sec=15)
                 except Exception:
@@ -4533,7 +4689,7 @@ def abrir_login():
     btns = tk.Frame(frm, bg=pal["panel"])
     btns.pack(fill="x", pady=(6, 0))
     ttk.Button(btns, text="Entrar", style="Accent.TButton", command=tentar_login).pack(side="left", expand=True, fill="x", padx=(0, 6))
-    ttk.Button(btns, text="Criar Usuário", style="Ghost.TButton", command=criar_usuario).pack(side="left", expand=True, fill="x")
+# [REMOVIDO LOGIN] # [REMOVIDO LOGIN]     ttk.Button(btns, text="Criar Usuário", style="Ghost.TButton", command=criar_usuario).pack(side="left", expand=True, fill="x")
 
     footer_text = f"Developed by André Mariano (v{get_local_version()})  •  Beta Test"
     bg.create_text(260, 334, text=footer_text, fill="#9ca3af", font=("Segoe UI", 9))
@@ -4578,4 +4734,3 @@ if __name__ == "__main__":
             )
         except Exception:
             pass
-
