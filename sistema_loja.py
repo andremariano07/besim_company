@@ -270,7 +270,7 @@ def backup_bulk_dir(local_dir: str, tipo: str):
 DISABLE_AUTO_UPDATE = (
     False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "4.2"
+APP_VERSION = "4.3"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -641,6 +641,33 @@ CREATE TABLE IF NOT EXISTS app_meta (
 )
 conn.commit()
 
+
+
+# >>> NOVO: Pontuação (Programa de Pontos)
+cursor.execute(
+    """
+CREATE TABLE IF NOT EXISTS pontuacao (
+    cpf TEXT PRIMARY KEY,
+    pontos INTEGER DEFAULT 0,
+    atualizado_em TEXT
+)
+"""
+)
+
+cursor.execute(
+    """
+CREATE TABLE IF NOT EXISTS resgates_pontos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cpf TEXT,
+    item TEXT,
+    pontos_usados INTEGER,
+    data TEXT,
+    hora TEXT
+)
+"""
+)
+conn.commit()
+# <<< FIM NOVO: Pontuação
 # ====== UTIL: hash de senha / migrações ======
 def hash_password(pw: str) -> str:
     return hashlib.sha256(pw.encode("utf-8")).hexdigest()
@@ -758,6 +785,114 @@ def ensure_password_policy_tables():
         conn.commit()
 
 ensure_password_policy_tables()
+
+
+# ===================== PONTUAÇÃO (1 R$ = 1 ponto) =====================
+PONTOS_POR_REAL = 1
+CUSTO_CAPA_PONTOS = 300
+CUSTO_PELICULA_PONTOS = 250
+
+def _pontos_de_valor(valor: float) -> int:
+    """Converte um valor em R$ para pontos (inteiro).
+    Regra solicitada: truncar (ex.: R$ 29,90 -> 29 pontos).
+    """
+    try:
+        v = float(valor or 0.0)
+    except Exception:
+        v = 0.0
+    v = max(0.0, v)
+    return max(0, int(v * float(PONTOS_POR_REAL)))
+
+def get_pontos_cliente(cpf: str) -> int:
+    try:
+        cpf = (cpf or '').strip()
+        if not cpf:
+            return 0
+        cursor.execute("SELECT COALESCE(pontos,0) FROM pontuacao WHERE cpf=?", (cpf,))
+        r = cursor.fetchone()
+        return int(r[0]) if r else 0
+    except Exception:
+        return 0
+
+def set_pontos_cliente(cpf: str, pontos: int):
+    cpf = (cpf or '').strip()
+    if not cpf:
+        return
+    try:
+        pts = int(pontos or 0)
+    except Exception:
+        pts = 0
+    pts = max(0, pts)
+    agora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    with conn:
+        cursor.execute(
+            "INSERT OR REPLACE INTO pontuacao(cpf,pontos,atualizado_em) VALUES(?,?,?)",
+            (cpf, pts, agora),
+        )
+
+def adicionar_pontos_cliente(cpf: str, valor_em_reais: float) -> int:
+    """Adiciona pontos ao cliente com base no valor final pago."""
+    cpf = (cpf or '').strip()
+    if not cpf:
+        return 0
+    pts_add = _pontos_de_valor(valor_em_reais)
+    if pts_add <= 0:
+        return 0
+    set_pontos_cliente(cpf, get_pontos_cliente(cpf) + pts_add)
+    return pts_add
+
+def registrar_resgate_pontos(cpf: str, item: str) -> tuple:
+    """Registra resgate (Capa/Película) e debita pontos.
+    Retorna (ok, msg, novo_saldo).
+    """
+    cpf = (cpf or '').strip()
+    item = (item or '').strip()
+    if not cpf:
+        return False, "CPF inválido.", 0
+    if item not in ("Capa", "Película", "Pelicula"):
+        return False, "Item inválido. Use Capa ou Película.", get_pontos_cliente(cpf)
+
+    custo = CUSTO_CAPA_PONTOS if item == "Capa" else CUSTO_PELICULA_PONTOS
+    saldo = get_pontos_cliente(cpf)
+    if saldo < custo:
+        return False, f"Pontos insuficientes. Saldo: {saldo} pts. Necessário: {custo} pts.", saldo
+
+    novo = max(0, saldo - custo)
+    data = datetime.datetime.now().strftime("%d/%m/%Y")
+    hora = datetime.datetime.now().strftime("%H:%M:%S")
+    with conn:
+        set_pontos_cliente(cpf, novo)
+        cursor.execute(
+            "INSERT INTO resgates_pontos(cpf,item,pontos_usados,data,hora) VALUES(?,?,?,?,?)",
+            (cpf, "Película" if item in ("Película", "Pelicula") else "Capa", int(custo), data, hora),
+        )
+    return True, f"Resgate registrado: {item} (-{custo} pts).", novo
+
+def run_pontos_migration_once():
+    """Migra pontos iniciais a partir do histórico de vendas (1x)."""
+    try:
+        cursor.execute("SELECT value FROM app_meta WHERE key=?", ('pontos_migracao_v1',))
+        r = cursor.fetchone()
+        if r and str(r[0] or '').strip() == '1':
+            return
+        cursor.execute("SELECT COUNT(1) FROM pontuacao")
+        if int(cursor.fetchone()[0] or 0) > 0:
+            cursor.execute("INSERT OR REPLACE INTO app_meta(key,value) VALUES(?,?)", ('pontos_migracao_v1','1'))
+            conn.commit()
+            return
+        cursor.execute("SELECT cpf, COALESCE(SUM(total),0) FROM vendas GROUP BY cpf")
+        for cpf, soma in (cursor.fetchall() or []):
+            cpf = (cpf or '').strip()
+            if not cpf:
+                continue
+            set_pontos_cliente(cpf, _pontos_de_valor(float(soma or 0.0)))
+        cursor.execute("INSERT OR REPLACE INTO app_meta(key,value) VALUES(?,?)", ('pontos_migracao_v1','1'))
+        conn.commit()
+    except Exception:
+        pass
+
+# Executa migração inicial de pontos (apenas 1 vez)
+run_pontos_migration_once()
 
 # ====== POLÍTICA DE SENHA (centralizada) ======
 PASSWORD_MIN_LEN = 8
@@ -1617,7 +1752,7 @@ def check_and_update_after_login(master: tk.Misc) -> bool:
             pass
         return False
 # ================= FUNÇÕES PDF =================
-def gerar_cupom(cliente, produto, qtd, pagamento, total):
+def gerar_cupom(cliente, produto, qtd, pagamento, total, cpf=None):
     agora = datetime.datetime.now()
     pasta_cupons = os.path.join(os.getcwd(), "cupons")
     os.makedirs(pasta_cupons, exist_ok=True)
@@ -1650,6 +1785,7 @@ def gerar_cupom(cliente, produto, qtd, pagamento, total):
         f"Quantidade: {qtd}",
         f"Forma de Pagamento: {pagamento}",
         f"Total: R$ {total:.2f}",
+        (f"Pontos acumulados: {get_pontos_cliente(cpf)} pts" if cpf else ""),
         f"Data: {agora.strftime('%d/%m/%Y')}",
         f"Hora: {agora.strftime('%H:%M:%S')}",
         "----------------------------------------------"
@@ -1657,7 +1793,8 @@ def gerar_cupom(cliente, produto, qtd, pagamento, total):
         "Obrigado pela preferência!",
     ]
     for l in linhas:
-        t.textLine(l)
+        if l:
+            t.textLine(l)
     c.drawText(t)
     c.save()
     try:
@@ -2309,7 +2446,7 @@ def abrir_sistema_com_logo(username, login_win):
             _refresh_theme_widgets()
             _refresh_statusbar_theme()
             try:
-                for t in (tree_cli, tree_upgrades, ag_tree, tree_cx, tree_m, tree_dev):
+                for t in (tree_cli, tree_upgrades, ag_tree, tree_cx, tree_m, tree_dev, tree_pontos):
                 # Estoque: sem zebra (somente cores por quantidade)
                     configure_zebra_tags(t, current_theme["name"])
                     apply_zebra(t)
@@ -2545,6 +2682,8 @@ def abrir_sistema_com_logo(username, login_win):
     # ====== UPGRADE ======
     aba_upgrade = ttk.Frame(abas, padding=10)
     abas.add(aba_upgrade, text="Upgrade")
+    aba_pontuacao = ttk.Frame(abas, padding=10)
+    abas.add(aba_pontuacao, text="Pontuação")
     f_u = ttk.Frame(aba_upgrade, padding=8)
     f_u.pack(fill="x", pady=6)
     ttk.Label(f_u, text="CPF").grid(row=0, column=0, sticky="w", padx=6, pady=4)
@@ -2593,10 +2732,18 @@ def abrir_sistema_com_logo(username, login_win):
             hora = datetime.datetime.now().strftime("%H:%M:%S")
             with conn:
                 cursor.execute("INSERT INTO vendas(cliente,cpf,produto,quantidade,total,pagamento,data,hora) VALUES (?,?,?,?,?,?,?,?)", (cliente, cpf, descricao, 1, valor, (f"Upgrade - {ent_pg_u.get().strip()}" if ent_pg_u.get().strip() else "Upgrade"), data, hora))
+
+                # >>> NOVO: soma pontos do cliente (Upgrade também soma pontos)
+                cursor.execute(
+                    "INSERT OR IGNORE INTO pontuacao(cpf,pontos,atualizado_em) VALUES(?,?,?)",
+                    (cpf, 0, datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")),
+                )
+                adicionar_pontos_cliente(cpf, valor)
+                # <<< FIM NOVO: pontos
                 cursor.execute("INSERT INTO caixa(valor,data,hora,motivo) VALUES (?,?,?,?)", (valor, data, hora, (f"Upgrade - {ent_pg_u.get().strip()}" if ent_pg_u.get().strip() else "Upgrade")))
                 cursor.execute("INSERT OR IGNORE INTO clientes(cpf,nome,telefone) VALUES (?,?,?)", (cpf, cliente, telefone))
             try:
-                caminho_pdf = gerar_cupom(cliente, descricao, 1, (ent_pg_u.get().strip() or "Upgrade"), valor)
+                caminho_pdf = gerar_cupom(cliente, descricao, 1, (ent_pg_u.get().strip() or "Upgrade"), valor, cpf=cpf)
 
                 try:
                     telegram_notify(f"""🆙 <b>UPGRADE REGISTRADO</b>
@@ -3375,7 +3522,172 @@ def abrir_sistema_com_logo(username, login_win):
         row=1, column=1, pady=8
     )
     carregar_clientes()
-    # ====== VENDAS ======
+    
+
+    # ====== PONTUAÇÃO ======
+    pt_top = ttk.Frame(aba_pontuacao, padding=8)
+    pt_top.pack(fill="x", pady=(0, 6))
+
+    pt_info = ttk.Label(
+        pt_top,
+        text=f"Regras: 1 R$ = 1 ponto • Capa = {CUSTO_CAPA_PONTOS} pts • Película = {CUSTO_PELICULA_PONTOS} pts",
+        font=("Segoe UI", 10, "bold"),
+    )
+    pt_info.pack(side="left", padx=6)
+
+    btn_refresh_pts = ttk.Button(pt_top, text="⟳ Atualizar", style="Secondary.TButton")
+    btn_refresh_pts.pack(side="right", padx=6)
+
+    pt_filter = ttk.Frame(aba_pontuacao, padding=(8, 0))
+    pt_filter.pack(fill="x", pady=(0, 6))
+
+    ttk.Label(pt_filter, text="Buscar (CPF ou Nome)").pack(side="left", padx=6)
+    ent_busca_pts = ttk.Entry(pt_filter, width=30)
+    ent_busca_pts.pack(side="left", padx=6)
+
+    pt_table_frame = ttk.Frame(aba_pontuacao, padding=(8, 0))
+    pt_table_frame.pack(fill="both", expand=True)
+
+    tree_pontos = ttk.Treeview(
+        pt_table_frame,
+        columns=("CPF", "Nome", "Pontos", "Último Resgate"),
+        show="headings",
+        height=12,
+    )
+    configure_zebra_tags(tree_pontos, current_theme["name"])
+    for col, txt, anchor, width in [
+        ("CPF", "CPF", "center", 160),
+        ("Nome", "Nome", "w", 320),
+        ("Pontos", "Pontos", "center", 100),
+        ("Último Resgate", "Último Resgate", "w", 260),
+    ]:
+        tree_pontos.heading(col, text=txt)
+        tree_pontos.column(col, width=width, anchor=anchor, stretch=(col in ("Nome", "Último Resgate")))
+
+    tree_pontos.pack(side="left", fill="both", expand=True)
+    pt_scroll = ttk.Scrollbar(pt_table_frame, orient="vertical", command=tree_pontos.yview)
+    tree_pontos.configure(yscroll=pt_scroll.set)
+    pt_scroll.pack(side="right", fill="y")
+
+    pt_actions = ttk.Frame(aba_pontuacao, padding=8)
+    pt_actions.pack(fill="x", pady=(6, 0))
+
+    ttk.Label(pt_actions, text="Resgatar:").pack(side="left", padx=(6, 4))
+    combo_resgate = ttk.Combobox(pt_actions, values=["Capa", "Película"], width=14, state="readonly")
+    combo_resgate.set("Capa")
+    combo_resgate.pack(side="left", padx=6)
+
+    lbl_sel = ttk.Label(pt_actions, text="Cliente selecionado: (nenhum)")
+    lbl_sel.pack(side="left", padx=10)
+
+    lbl_saldo = ttk.Label(pt_actions, text="Saldo: 0 pts", font=("Segoe UI", 10, "bold"))
+    lbl_saldo.pack(side="left", padx=10)
+
+    btn_resgatar = ttk.Button(pt_actions, text="✓ Registrar Resgate", style="Success.TButton")
+    btn_resgatar.pack(side="right", padx=6)
+
+
+    def _ultimo_resgate_str(cpf: str) -> str:
+        try:
+            cursor.execute(
+                "SELECT item, data, hora FROM resgates_pontos WHERE cpf=? ORDER BY id DESC LIMIT 1",
+                (cpf,),
+            )
+            r = cursor.fetchone()
+            if not r:
+                return ""
+            item, data, hora = r
+            return f"{item} ({data} {hora})"
+        except Exception:
+            return ""
+
+
+    def carregar_pontuacao(query: str = ""):
+        tree_pontos.delete(*tree_pontos.get_children())
+        q = (query or "").strip()
+        if q:
+            cursor.execute(
+                """
+                SELECT c.cpf, COALESCE(c.nome,''), COALESCE(p.pontos,0)
+                FROM clientes c
+                LEFT JOIN pontuacao p ON p.cpf=c.cpf
+                WHERE c.cpf LIKE ? OR c.nome LIKE ?
+                ORDER BY COALESCE(p.pontos,0) DESC, c.nome ASC
+                """,
+                (f"%{q}%", f"%{q}%"),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT c.cpf, COALESCE(c.nome,''), COALESCE(p.pontos,0)
+                FROM clientes c
+                LEFT JOIN pontuacao p ON p.cpf=c.cpf
+                ORDER BY COALESCE(p.pontos,0) DESC, c.nome ASC
+                """
+            )
+
+        for cpf, nome, pontos in cursor.fetchall() or []:
+            last = _ultimo_resgate_str(cpf)
+            tree_pontos.insert("", "end", iid=str(cpf), values=(cpf, nome, int(pontos or 0), last))
+
+        apply_zebra(tree_pontos)
+
+
+    def _on_busca_pts(_evt=None):
+        carregar_pontuacao(ent_busca_pts.get())
+
+    ent_busca_pts.bind("<KeyRelease>", _on_busca_pts)
+    ent_busca_pts.bind("<Return>", _on_busca_pts)
+
+
+    def _on_select_pts(_evt=None):
+        sel = tree_pontos.selection()
+        if not sel:
+            lbl_sel.config(text="Cliente selecionado: (nenhum)")
+            lbl_saldo.config(text="Saldo: 0 pts")
+            return
+
+        cpf = str(sel[0])
+        try:
+            cursor.execute("SELECT nome FROM clientes WHERE cpf=?", (cpf,))
+            r = cursor.fetchone()
+            nome = r[0] if r and r[0] else ""
+        except Exception:
+            nome = ""
+
+        saldo = get_pontos_cliente(cpf)
+        lbl_sel.config(text=f"Cliente selecionado: {nome} ({cpf})")
+        lbl_saldo.config(text=f"Saldo: {saldo} pts")
+
+    tree_pontos.bind("<<TreeviewSelect>>", _on_select_pts)
+
+
+    def _do_resgatar():
+        sel = tree_pontos.selection()
+        if not sel:
+            messagebox.showwarning("Atenção", "Selecione um cliente na tabela de Pontuação.")
+            return
+
+        cpf = str(sel[0])
+        item = combo_resgate.get().strip()
+        ok, msg, _novo = registrar_resgate_pontos(cpf, item)
+
+        if ok:
+            messagebox.showinfo("Resgate", msg)
+        else:
+            messagebox.showwarning("Resgate", msg)
+
+        carregar_pontuacao(ent_busca_pts.get())
+        _on_select_pts()
+
+    btn_resgatar.config(command=_do_resgatar)
+    btn_refresh_pts.config(command=lambda: carregar_pontuacao(ent_busca_pts.get()))
+
+    try:
+        carregar_pontuacao()
+    except Exception:
+        pass
+# ====== VENDAS ======
     f_v = ttk.Frame(aba_vendas, padding=8)
     f_v.pack(fill="x", pady=6)
     ttk.Label(f_v, text="CPF").grid(row=0, column=0, sticky="w", padx=6, pady=4)
@@ -3508,6 +3820,14 @@ def abrir_sistema_com_logo(username, login_win):
                     "INSERT INTO vendas(cliente,cpf,produto,quantidade,total,pagamento,data,hora) VALUES (?,?,?,?,?,?,?,?)",
                     (cliente, cpf, nome_prod, qtd, total, pagamento, data, hora),
                 )
+
+                # >>> NOVO: soma pontos do cliente (1 R$ = 1 ponto)
+                cursor.execute(
+                    "INSERT OR IGNORE INTO pontuacao(cpf,pontos,atualizado_em) VALUES(?,?,?)",
+                    (cpf, 0, datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")),
+                )
+                adicionar_pontos_cliente(cpf, total)
+                # <<< FIM NOVO: pontos
                 cursor.execute(
                     "UPDATE produtos SET estoque=? WHERE codigo=?",
                     (estoque - qtd, codigo),
@@ -3530,7 +3850,7 @@ def abrir_sistema_com_logo(username, login_win):
 
             # Gerar cupom e enviar por e-mail, se marcado
             try:
-                caminho_pdf = gerar_cupom(cliente or "", nome_prod, qtd, pagamento or "", total)
+                caminho_pdf = gerar_cupom(cliente or "", nome_prod, qtd, pagamento or "", total, cpf=cpf)
 
                 try:
                     telegram_notify(f"""✅ <b>VENDA REALIZADA</b>
