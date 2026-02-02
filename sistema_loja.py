@@ -270,7 +270,7 @@ def backup_bulk_dir(local_dir: str, tipo: str):
 DISABLE_AUTO_UPDATE = (
     False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "4.3"
+APP_VERSION = "4.4"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -2179,18 +2179,18 @@ def gerar_relatorio_vendas_mes_pdf(ano: int = None, mes: int = None, top_n: int 
     logo_path_local = os.path.join(os.getcwd(), "logo.png")
     if os.path.exists(logo_path_local):
         try:
-            c.drawImage(ImageReader(logo_path_local), 40, 790, width=140, height=40,
+            c.drawImage(ImageReader(logo_path_local), 40, 770, width=140, height= 35,
                         preserveAspectRatio=True, mask="auto")
         except Exception:
             pass
 
     c.setFont("Helvetica-Bold", 13)
-    c.drawString(40, 770, f"Relatório Mensal de Vendas — {mes:02d}/{ano:04d}")
+    c.drawString(40, 745, f"Relatório Mensal de Vendas — {mes:02d}/{ano:04d}")
     c.setFont("Helvetica", 11)
-    c.drawString(40, 752, "-" * 110)
+    c.drawString(40, 728, "-" * 110)
 
     # Resumo
-    y = 730
+    y = 705
     c.setFont("Helvetica-Bold", 12)
     c.drawString(40, y, f"Total do mês: R$ {total_mes:.2f}")
     y -= 18
@@ -2211,7 +2211,7 @@ def gerar_relatorio_vendas_mes_pdf(ano: int = None, mes: int = None, top_n: int 
 
     if not chart_ok:
         c.setFont("Helvetica", 10)
-        c.drawString(40, 690, "(Gráfico indisponível — matplotlib não encontrado. Relatório gerado sem gráfico.)")
+        c.drawString(40, 675, "(Gráfico indisponível — matplotlib não encontrado. Relatório gerado sem gráfico.)")
 
     # Ranking
     c.setFont("Helvetica-Bold", 11)
@@ -2242,14 +2242,14 @@ def gerar_relatorio_vendas_mes_pdf(ano: int = None, mes: int = None, top_n: int 
                 c.showPage()
                 if os.path.exists(logo_path_local):
                     try:
-                        c.drawImage(ImageReader(logo_path_local), 40, 790, width=140, height=40,
+                        c.drawImage(ImageReader(logo_path_local), 40, 770, width=140, height= 35,
                                     preserveAspectRatio=True, mask="auto")
                     except Exception:
                         pass
                 c.setFont("Helvetica-Bold", 13)
-                c.drawString(40, 770, f"Relatório Mensal de Vendas — {mes:02d}/{ano:04d} (continuação)")
+                c.drawString(40, 745, f"Relatório Mensal de Vendas — {mes:02d}/{ano:04d} (continuação)")
                 c.setFont("Helvetica", 11)
-                c.drawString(40, 752, "-" * 110)
+                c.drawString(40, 728, "-" * 110)
                 c.setFont("Helvetica-Bold", 11)
                 c.drawString(40, 730, f"Ranking TOP {top_n} de produtos (por valor vendido)")
                 c.setFont("Helvetica", 10)
@@ -2265,14 +2265,14 @@ def gerar_relatorio_vendas_mes_pdf(ano: int = None, mes: int = None, top_n: int 
         c.showPage()
         if os.path.exists(logo_path_local):
             try:
-                c.drawImage(ImageReader(logo_path_local), 40, 790, width=140, height=40,
+                c.drawImage(ImageReader(logo_path_local), 40, 770, width=140, height= 35,
                             preserveAspectRatio=True, mask="auto")
             except Exception:
                 pass
         c.setFont("Helvetica-Bold", 13)
-        c.drawString(40, 770, f"Relatório Mensal de Vendas — {mes:02d}/{ano:04d} (totais por dia)")
+        c.drawString(40, 745, f"Relatório Mensal de Vendas — {mes:02d}/{ano:04d} (totais por dia)")
         c.setFont("Helvetica", 11)
-        c.drawString(40, 752, "-" * 110)
+        c.drawString(40, 728, "-" * 110)
         y = 730
 
     c.setFont("Helvetica-Bold", 11)
@@ -3603,7 +3603,9 @@ def abrir_sistema_com_logo(username, login_win):
 
 
     def carregar_pontuacao(query: str = ""):
-        tree_pontos.delete(*tree_pontos.get_children())
+        # Limpa a Treeview (robusto)
+        for _iid in tree_pontos.get_children():
+            tree_pontos.delete(_iid)
         q = (query or "").strip()
         if q:
             cursor.execute(
@@ -3626,10 +3628,16 @@ def abrir_sistema_com_logo(username, login_win):
                 """
             )
 
-        for cpf, nome, pontos in cursor.fetchall() or []:
-            last = _ultimo_resgate_str(cpf)
-            tree_pontos.insert("", "end", iid=str(cpf), values=(cpf, nome, int(pontos or 0), last))
 
+        for cpf, nome, pontos in cursor.fetchall() or []:
+            cpf_iid = str((cpf or "")).strip()
+            last = _ultimo_resgate_str(cpf_iid)
+            vals = (cpf_iid, nome, int(pontos or 0), last)
+            # Proteção anti-colisão de iid: se já existir, apenas atualiza os valores
+            if tree_pontos.exists(cpf_iid):
+                tree_pontos.item(cpf_iid, values=vals)
+            else:
+                tree_pontos.insert("", "end", iid=cpf_iid, values=vals)
         apply_zebra(tree_pontos)
 
 
@@ -4238,10 +4246,74 @@ def abrir_sistema_com_logo(username, login_win):
 
         except ValueError:
             messagebox.showerror("Erro", "Valor inválido")
+    # ====== RELATÓRIO MENSAL (último mês) — Caixa ======
+    def _prev_month_year(_today=None):
+        """Retorna (ano, mes) do mês anterior ao informado (ou ao dia de hoje)."""
+        dt = _today or datetime.date.today()
+        y, m = int(dt.year), int(dt.month) - 1
+        if m <= 0:
+            m = 12
+            y -= 1
+        return y, m
+
+    def ver_relatorio_mensal_ultimo_mes(send_telegram: bool = True):
+        """Gera e abre o relatório mensal do último mês e envia o PDF pelo Telegram (chat já configurado)."""
+        try:
+            y, m = _prev_month_year()
+
+            # Gera o PDF (a função já abre o arquivo no visualizador do sistema)
+            pdf_path = gerar_relatorio_vendas_mes_pdf(y, m)
+
+            # Envio Telegram (opcional)
+            if send_telegram:
+                try:
+                    agora_txt = datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+                    telegram_notify(
+                        f"""\U0001F4CA <b>RELATÓRIO MENSAL</b>
+\U0001F4C5 Mês: {m:02d}/{y:04d}
+\U0001F552 Gerado em: {agora_txt}""",
+                        dedupe_key=f"rel_mensal_msg_{y:04d}{m:02d}",
+                        dedupe_window_sec=30,
+                    )
+                except Exception:
+                    pass
+
+                try:
+                    telegram_send_pdf(
+                        f"\U0001F4CA Relatório mensal {m:02d}/{y:04d}",
+                        pdf_path,
+                        dedupe_key=f"rel_mensal_pdf_{y:04d}{m:02d}",
+                        dedupe_window_sec=120,
+                    )
+                except Exception:
+                    pass
+
+            messagebox.showinfo(
+                'Relatório Mensal',
+                f'Relatório mensal {m:02d}/{y:04d} gerado com sucesso!\n\nArquivo: {pdf_path}',
+            )
+            return pdf_path
+
+        except Exception as ex:
+            messagebox.showerror(
+                'Erro',
+                f'Falha ao gerar/enviar relatório mensal do último mês.\n\nDetalhes: {ex}',
+            )
+            return None
+
     ttk.Button(caixa_ops, text="Registrar Saída", command=registrar_saida_caixa).pack(
         side="left", padx=6, pady=10
     )
     ttk.Button(caixa_ops, text="🔒 Fechar Caixa", style="FecharCaixa.TButton", command=lambda: fechar_caixa()).pack(side="left", padx=6, pady=10)
+    btn_rel_mensal = ttk.Button(
+        caixa_ops,
+        text="\U0001F4CA Relatório Mensal (último mês)",
+        style="Accent.TButton",
+        command=ver_relatorio_mensal_ultimo_mes,
+    )
+    btn_rel_mensal.pack(side="left", padx=6, pady=10)
+    add_tooltip(btn_rel_mensal, "Gera o relatório do mês anterior e envia o PDF no Telegram (chat configurado).")
+
     ttk.Separator(f_cx, orient="horizontal").pack(fill="x", pady=6)
     tree_cx_frame = ttk.Frame(f_cx)
     tree_cx_frame.pack(fill="both", expand=True)
@@ -4296,6 +4368,8 @@ def abrir_sistema_com_logo(username, login_win):
         lbl_data_hora.config(text=f"Data e Hora: {agora.strftime('%d/%m/%Y %H:%M:%S')}")
         if aba_caixa.winfo_exists():
             aba_caixa.after(1000, atualizar_caixa)
+
+
     def fechar_caixa():
         hoje = datetime.datetime.now().strftime("%d/%m/%Y")
         cursor.execute("SELECT SUM(valor) FROM caixa WHERE data=?", (hoje,))
