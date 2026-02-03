@@ -43,6 +43,7 @@ import subprocess
 import hmac
 import secrets
 import getpass
+from io import BytesIO
 
 # ---- Gráficos para relatório mensal (matplotlib, modo headless) ----
 # O app continua funcionando mesmo sem matplotlib (gera PDF sem gráfico).
@@ -273,7 +274,7 @@ def backup_bulk_dir(local_dir: str, tipo: str):
 DISABLE_AUTO_UPDATE = (
     False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "4.5"
+APP_VERSION = "4.6"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -2756,6 +2757,312 @@ def formatar_moeda(event, entry):
     else:
         entry.delete(0, "end")
         entry.insert(0, "")
+
+
+# ================= DASHBOARD (Resumo / KPIs) =================
+# Aba inicial com indicadores e mini-gráfico (sparkline) opcional via matplotlib.
+# Não altera regras do sistema; apenas consome as tabelas existentes.
+
+def _dash_fmt_brl(valor: float) -> str:
+    """Formata número para Real (pt-BR) sem depender de locale."""
+    try:
+        v = float(valor or 0.0)
+    except Exception:
+        v = 0.0
+    s = f"{v:,.2f}"
+    # converte 1,234.56 -> 1.234,56
+    return "R$ " + s.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _dash_datas_ultimos_dias(n: int = 7):
+    hoje = datetime.date.today()
+    return [(hoje - datetime.timedelta(days=i)).strftime("%d/%m/%Y") for i in range(int(n))][::-1]
+
+
+def _dash_mes_ano_atual():
+    hoje = datetime.date.today()
+    return f"{hoje.month:02d}", f"{hoje.year:04d}"
+
+
+def _dash_criar_card(parent, titulo: str, valor_inicial: str = "—", subtitulo: str = ""):
+    """Card simples estilo KPI."""
+    card = ttk.Frame(parent, padding=12)
+    lbl_t = ttk.Label(card, text=titulo, font=("Segoe UI", 10, "bold"))
+    lbl_v = ttk.Label(card, text=valor_inicial, font=("Segoe UI", 18, "bold"))
+    lbl_s = ttk.Label(card, text=subtitulo or "", font=("Segoe UI", 9))
+    lbl_t.pack(anchor="w")
+    lbl_v.pack(anchor="w", pady=(6, 0))
+    if subtitulo is not None:
+        lbl_s.pack(anchor="w", pady=(4, 0))
+    return card, lbl_v, lbl_s
+
+
+def _dash_gerar_sparkline_img(valores, width: int = 260, height: int = 60):
+    """Gera uma sparkline como PhotoImage (ou None)."""
+    try:
+        if not globals().get('_HAS_MPL') or globals().get('plt') is None:
+            return None
+        plt_mod = globals().get('plt')
+        fig = plt_mod.figure(figsize=(max(1, width) / 100.0, max(1, height) / 100.0), dpi=100)
+        ax = fig.add_subplot(111)
+        xs = list(range(len(valores)))
+        ax.plot(xs, valores, linewidth=2.0, color="#2563eb")
+        ax.fill_between(xs, valores, alpha=0.15, color="#2563eb")
+        ax.set_axis_off()
+        fig.tight_layout(pad=0)
+        buf = BytesIO()
+        fig.savefig(buf, format="png", transparent=True)
+        try:
+            plt_mod.close(fig)
+        except Exception:
+            pass
+        buf.seek(0)
+        img = Image.open(buf)
+        return ImageTk.PhotoImage(img)
+    except Exception:
+        return None
+
+
+def montar_aba_resumo_dashboard(abas: ttk.Notebook, conn: sqlite3.Connection, cursor: sqlite3.Cursor):
+    """Cria a aba Resumo/Home com KPIs e atualiza a cada 60s. Retorna o frame da aba."""
+    aba_resumo = ttk.Frame(abas, padding=10)
+    try:
+        abas.insert(0, aba_resumo, text="Resumo")
+    except Exception:
+        abas.add(aba_resumo, text="Resumo")
+
+    # Layout base
+    aba_resumo.columnconfigure(0, weight=1)
+    aba_resumo.columnconfigure(1, weight=1)
+
+    # Linha 1: Vendas Hoje / 7 dias / Mês
+    row1 = ttk.Frame(aba_resumo)
+    row1.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+    for i in range(3):
+        row1.columnconfigure(i, weight=1)
+
+    card_dia, lbl_dia, _ = _dash_criar_card(row1, "Vendas (Hoje)")
+    card_sem, lbl_sem, _ = _dash_criar_card(row1, "Vendas (7 dias)")
+    card_mes, lbl_mes, _ = _dash_criar_card(row1, "Vendas (Mês)")
+
+    card_dia.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+    card_sem.grid(row=0, column=1, sticky="ew", padx=8)
+    card_mes.grid(row=0, column=2, sticky="ew", padx=(8, 0))
+
+    # Sparkline dentro do card do mês
+    spark_lbl = ttk.Label(card_mes)
+    spark_lbl.pack(anchor="w", pady=(8, 0))
+
+    # Linha 2: Totais por pagamento (mês)
+    row2 = ttk.Frame(aba_resumo)
+    row2.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+    for i in range(4):
+        row2.columnconfigure(i, weight=1)
+
+    card_pix, lbl_pix, _ = _dash_criar_card(row2, "PIX (Mês)")
+    card_car, lbl_car, _ = _dash_criar_card(row2, "Cartão (Mês)")
+    card_din, lbl_din, _ = _dash_criar_card(row2, "Dinheiro (Mês)")
+    card_out, lbl_out, _ = _dash_criar_card(row2, "Outros (Mês)")
+
+    card_pix.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+    card_car.grid(row=0, column=1, sticky="ew", padx=8)
+    card_din.grid(row=0, column=2, sticky="ew", padx=8)
+    card_out.grid(row=0, column=3, sticky="ew", padx=(8, 0))
+
+    # Linha 3: Top 5 / Estoque crítico
+    box_left = ttk.Frame(aba_resumo)
+    box_right = ttk.Frame(aba_resumo)
+    box_left.grid(row=2, column=0, sticky="nsew", padx=(0, 8))
+    box_right.grid(row=2, column=1, sticky="nsew", padx=(8, 0))
+    aba_resumo.rowconfigure(2, weight=1)
+
+    ttk.Label(box_left, text="Top 5 Produtos (Mês)", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 6))
+    top_list = tk.Listbox(box_left, height=8)
+    top_list.pack(fill="both", expand=True)
+
+    ttk.Label(box_right, text="Estoque Crítico (≤5)", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 6))
+    stock_list = tk.Listbox(box_right, height=8)
+    stock_list.pack(fill="both", expand=True)
+
+    # Linha 4: OS + Pontos
+    row4 = ttk.Frame(aba_resumo)
+    row4.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+    for i in range(3):
+        row4.columnconfigure(i, weight=1)
+
+    card_os_p, lbl_os_p, _ = _dash_criar_card(row4, "OS Pendentes (Mês)")
+    card_os_a, lbl_os_a, _ = _dash_criar_card(row4, "OS Aprovadas (Mês)")
+    card_pts, lbl_pts, _ = _dash_criar_card(row4, "Pontos Resgatados (Mês)")
+
+    card_os_p.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+    card_os_a.grid(row=0, column=1, sticky="ew", padx=8)
+    card_pts.grid(row=0, column=2, sticky="ew", padx=(8, 0))
+
+    # manter referência das imagens para evitar GC
+    state = {"spark_img": None}
+
+    def _refresh():
+        try:
+            hoje = datetime.date.today().strftime("%d/%m/%Y")
+            mm, yyyy = _dash_mes_ano_atual()
+
+            # Vendas hoje
+            cursor.execute("SELECT COALESCE(SUM(total),0) FROM vendas WHERE data=?", (hoje,))
+            total_hoje = float((cursor.fetchone() or [0])[0] or 0.0)
+
+            # Vendas 7 dias
+            dias7 = _dash_datas_ultimos_dias(7)
+            qmarks = ",".join(["?"] * len(dias7))
+            cursor.execute(f"SELECT COALESCE(SUM(total),0) FROM vendas WHERE data IN ({qmarks})", tuple(dias7))
+            total_7d = float((cursor.fetchone() or [0])[0] or 0.0)
+
+            # Vendas mês
+            cursor.execute(
+                "SELECT COALESCE(SUM(total),0) FROM vendas WHERE substr(data,4,2)=? AND substr(data,7,4)=?",
+                (mm, yyyy),
+            )
+            total_mes = float((cursor.fetchone() or [0])[0] or 0.0)
+
+            lbl_dia.config(text=_dash_fmt_brl(total_hoje))
+            lbl_sem.config(text=_dash_fmt_brl(total_7d))
+            lbl_mes.config(text=_dash_fmt_brl(total_mes))
+
+            # Pagamentos mês
+            cursor.execute(
+                """
+                SELECT pagamento, COALESCE(SUM(total),0)
+                FROM vendas
+                WHERE substr(data,4,2)=? AND substr(data,7,4)=?
+                GROUP BY pagamento
+                """,
+                (mm, yyyy),
+            )
+            totals = {"PIX": 0.0, "Cartão": 0.0, "Dinheiro": 0.0, "OUTROS": 0.0}
+            for pg, val in (cursor.fetchall() or []):
+                pg = (pg or "").strip()
+                v = float(val or 0.0)
+                if pg.startswith("Upgrade"):
+                    totals["OUTROS"] += v
+                elif pg in totals:
+                    totals[pg] += v
+                else:
+                    totals["OUTROS"] += v
+
+            lbl_pix.config(text=_dash_fmt_brl(totals["PIX"]))
+            lbl_car.config(text=_dash_fmt_brl(totals["Cartão"]))
+            lbl_din.config(text=_dash_fmt_brl(totals["Dinheiro"]))
+            lbl_out.config(text=_dash_fmt_brl(totals["OUTROS"]))
+
+            # Top 5 produtos
+            top_list.delete(0, "end")
+            cursor.execute(
+                """
+                SELECT produto, COALESCE(SUM(total),0) AS valor_total
+                FROM vendas
+                WHERE substr(data,4,2)=? AND substr(data,7,4)=?
+                GROUP BY produto
+                ORDER BY valor_total DESC
+                LIMIT 5
+                """,
+                (mm, yyyy),
+            )
+            for prod, val in (cursor.fetchall() or []):
+                prod = (prod or "(sem produto)")
+                top_list.insert("end", f"{prod[:45]} — {_dash_fmt_brl(float(val or 0.0))}")
+
+            # Estoque crítico
+            stock_list.delete(0, "end")
+            cursor.execute(
+                """
+                SELECT nome, COALESCE(estoque,0)
+                FROM produtos
+                WHERE COALESCE(estoque,0) <= 5
+                ORDER BY COALESCE(estoque,0) ASC, nome ASC
+                LIMIT 10
+                """
+            )
+            for nome, est in (cursor.fetchall() or []):
+                stock_list.insert("end", f"{(nome or '')[:48]} — {int(est or 0)} un")
+
+            # OS pendentes/aprovadas
+            cursor.execute(
+                """
+                SELECT
+                  SUM(CASE WHEN COALESCE(aprovado,0)=0 THEN 1 ELSE 0 END) AS pendentes,
+                  SUM(CASE WHEN COALESCE(aprovado,0)=1 THEN 1 ELSE 0 END) AS aprovadas
+                FROM manutencao
+                WHERE substr(data,4,2)=? AND substr(data,7,4)=?
+                """,
+                (mm, yyyy),
+            )
+            pend, aprov = cursor.fetchone() or (0, 0)
+            lbl_os_p.config(text=str(int(pend or 0)))
+            lbl_os_a.config(text=str(int(aprov or 0)))
+
+            # Pontos resgatados no mês
+            cursor.execute(
+                """
+                SELECT COALESCE(SUM(pontos_usados),0)
+                FROM resgates_pontos
+                WHERE substr(data,4,2)=? AND substr(data,7,4)=?
+                """,
+                (mm, yyyy),
+            )
+            pts = int((cursor.fetchone() or [0])[0] or 0)
+            lbl_pts.config(text=f"{pts} pts")
+
+            # Sparkline (últimos 14 dias)
+            dias14 = _dash_datas_ultimos_dias(14)
+            qmarks14 = ",".join(["?"] * len(dias14))
+            cursor.execute(
+                f"""
+                SELECT data, COALESCE(SUM(total),0)
+                FROM vendas
+                WHERE data IN ({qmarks14})
+                GROUP BY data
+                """,
+                tuple(dias14),
+            )
+            mp = {str(d): float(v or 0.0) for d, v in (cursor.fetchall() or [])}
+            serie = [mp.get(d, 0.0) for d in dias14]
+            img = _dash_gerar_sparkline_img(serie)
+            if img is not None:
+                state["spark_img"] = img
+                spark_lbl.config(image=img, text="")
+            else:
+                spark_lbl.config(image="", text="(sparkline indisponível)")
+
+        except Exception as ex:
+            try:
+                logging.error(f"Falha ao atualizar dashboard: {ex}", exc_info=True)
+            except Exception:
+                pass
+        finally:
+            try:
+                aba_resumo.after(60000, _refresh)
+            except Exception:
+                pass
+
+    # atualiza ao abrir e também periodicamente
+    _refresh()
+
+    # Atualiza ao selecionar a aba
+    def _on_tab_changed(event=None):
+        try:
+            if abas.select() == aba_resumo._w:
+                _refresh()
+        except Exception:
+            pass
+
+    try:
+        abas.bind("<<NotebookTabChanged>>", _on_tab_changed, add=True)
+    except Exception:
+        pass
+
+    return aba_resumo
+
+# ================= FIM DASHBOARD =================
+
 # ================= SISTEMA PRINCIPAL =================
 def abrir_sistema_com_logo(username, login_win):
     root = tk.Toplevel()
@@ -3055,6 +3362,15 @@ def abrir_sistema_com_logo(username, login_win):
     abas = ttk.Notebook(root)
 
     abas.pack(fill="both", expand=True, padx=12, pady=(8, 12))
+    # ====== RESUMO (Dashboard KPIs) ======
+    try:
+        montar_aba_resumo_dashboard(abas, conn, cursor)
+    except Exception as _ex_dash:
+        try:
+            logging.error(f'Falha ao montar aba Resumo: {_ex_dash}', exc_info=True)
+        except Exception:
+            pass
+
     aba_estoque = ttk.Frame(abas, padding=10)
     aba_vendas = ttk.Frame(abas, padding=10)
     aba_clientes = ttk.Frame(abas, padding=10)
