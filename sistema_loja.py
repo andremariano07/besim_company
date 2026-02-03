@@ -40,6 +40,9 @@ from email.message import EmailMessage
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 import subprocess
+import hmac
+import secrets
+import getpass
 
 # ---- Gráficos para relatório mensal (matplotlib, modo headless) ----
 # O app continua funcionando mesmo sem matplotlib (gera PDF sem gráfico).
@@ -270,7 +273,7 @@ def backup_bulk_dir(local_dir: str, tipo: str):
 DISABLE_AUTO_UPDATE = (
     False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "4.4"
+APP_VERSION = "4.5"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -641,6 +644,20 @@ CREATE TABLE IF NOT EXISTS app_meta (
 )
 conn.commit()
 
+# >>> NOVO: Licença do app (1 instalação = 1 licença ativa)
+cursor.execute(
+    """CREATE TABLE IF NOT EXISTS app_licenca (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    machine_id TEXT,
+    chave TEXT,
+    expira_em TEXT,        -- ISO: YYYY-MM-DD
+    ativada_em TEXT,       -- ISO: YYYY-MM-DD HH:MM:SS
+    atualizado_em TEXT     -- ISO: YYYY-MM-DD HH:MM:SS
+)
+"""
+)
+conn.commit()
+
 
 
 # >>> NOVO: Pontuação (Programa de Pontos)
@@ -998,6 +1015,332 @@ def is_admin(username: str) -> bool:
         return bool(r and r[0] == 1)
     except Exception:
         return False
+
+
+# ===================== LICENÇA DO APP (30 dias) =====================
+# Regra solicitada: válida ATÉ O FIM DO DIA do vencimento.
+LICENCA_DIAS = 30
+
+# IMPORTANTE:
+# Troque esse segredo por um valor grande e único (e mantenha privado).
+# Em EXE ainda é possível engenharia reversa, mas isso já evita chaves fáceis.
+LICENSE_SECRET = b"MUDE-ESSE-SEGREDO-PRA-UM-VALOR-GRANDE-E-UNICO-123456789"
+
+def _today_date():
+    return datetime.date.today()
+
+def _now_iso():
+    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def _add_days_iso(days: int):
+    return (_today_date() + datetime.timedelta(days=int(days))).strftime("%Y-%m-%d")
+
+def get_machine_id() -> str:
+    """Identificador simples do computador para amarrar a licença."""
+    try:
+        base = f"{platform.node()}|{platform.system()}|{platform.release()}|{getpass.getuser()}|{sys.platform}"
+    except Exception:
+        base = f"{platform.node()}|{platform.system()}|{platform.release()}|{sys.platform}"
+    return hashlib.sha256(base.encode("utf-8")).hexdigest().upper()
+
+def _hmac8(data: str) -> str:
+    sig = hmac.new(LICENSE_SECRET, data.encode("utf-8"), hashlib.sha256).hexdigest().upper()
+    return sig[:8]
+
+def gerar_chave_licenca(expira_em_iso: str, machine_id: str = None) -> str:
+    """Formato: YYYYMMDD-MID8-RND4-SIG8"""
+    machine_id = (machine_id or get_machine_id()).upper()
+    exp = (expira_em_iso or "").replace("-", "")
+    mid8 = machine_id[:8]
+    rnd4 = "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(4))
+    payload = f"{exp}-{mid8}-{rnd4}"
+    sig8 = _hmac8(payload)
+    return f"{exp}-{mid8}-{rnd4}-{sig8}"
+
+def validar_chave_licenca(chave: str, machine_id: str = None):
+    """Retorna (ok, msg, expira_iso)."""
+    try:
+        machine_id = (machine_id or get_machine_id()).upper()
+        key = (chave or "").strip().upper()
+        parts = key.split("-")
+        if len(parts) != 4:
+            return False, "Formato inválido. Use: YYYYMMDD-XXXX-XXXX-XXXX", ""
+        exp_yyyymmdd, mid8, rnd4, sig8 = parts
+        if len(exp_yyyymmdd) != 8 or (not exp_yyyymmdd.isdigit()):
+            return False, "Data inválida na chave.", ""
+        expira_iso = f"{exp_yyyymmdd[0:4]}-{exp_yyyymmdd[4:6]}-{exp_yyyymmdd[6:8]}"
+        if mid8 != machine_id[:8]:
+            return False, "Esta chave não corresponde a este computador.", ""
+        payload = f"{exp_yyyymmdd}-{mid8}-{rnd4}"
+        expected = _hmac8(payload)
+        if not hmac.compare_digest(expected, sig8):
+            return False, "Assinatura inválida (chave adulterada).", ""
+        # Válida ATÉ o fim do dia: expira só quando hoje > exp_date
+        exp_date = datetime.datetime.strptime(expira_iso, "%Y-%m-%d").date()
+        if _today_date() > exp_date:
+            return False, "Chave vencida. Solicite uma nova.", expira_iso
+        return True, "OK", expira_iso
+    except Exception as ex:
+        return False, f"Erro ao validar chave: {ex}", ""
+
+def obter_licenca_db():
+    try:
+        cursor.execute("SELECT machine_id, chave, expira_em FROM app_licenca WHERE id=1")
+        r = cursor.fetchone()
+        if not r:
+            return None
+        return {"machine_id": r[0] or "", "chave": r[1] or "", "expira_em": r[2] or ""}
+    except Exception:
+        return None
+
+def salvar_licenca_db(machine_id: str, chave: str, expira_em_iso: str):
+    now = _now_iso()
+    with conn:
+        cursor.execute(
+            """INSERT INTO app_licenca (id, machine_id, chave, expira_em, ativada_em, atualizado_em)
+VALUES (1, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+    machine_id=excluded.machine_id,
+    chave=excluded.chave,
+    expira_em=excluded.expira_em,
+    atualizado_em=excluded.atualizado_em
+""",
+            (machine_id, chave, expira_em_iso, now, now),
+        )
+
+def licenca_valida_local():
+    lic = obter_licenca_db()
+    if not lic:
+        return False, "Licença não ativada."
+    ok, msg, _exp = validar_chave_licenca(lic.get("chave", ""), lic.get("machine_id", ""))
+    return ok, msg
+
+
+def get_tempo_restante_licenca_str():
+    """Retorna string amigável para exibir na status bar com o tempo restante da licença."""
+    try:
+        lic = obter_licenca_db()
+        if not lic or not (lic.get("expira_em") or "").strip():
+            return "Licença: não ativada"
+        expira_iso = (lic.get("expira_em") or "").strip()  # YYYY-MM-DD
+        exp_date = datetime.datetime.strptime(expira_iso, "%Y-%m-%d").date()
+        hoje = datetime.date.today()
+        # Regra do app: válida ATÉ o fim do dia do vencimento
+        if hoje == exp_date:
+            return "Licença expira hoje"
+        if hoje < exp_date:
+            dias = (exp_date - hoje).days
+            return f"Licença: {dias} dia(s) restante(s)"
+        dias = (hoje - exp_date).days
+        return f"Licença vencida há {dias} dia(s)"
+    except Exception:
+        return "Licença: indisponível"
+
+
+def bind_licenca_statusbar_auto_update(root_widget, label_widget, interval_ms=60000):
+    """Atualiza periodicamente a label da status bar com o tempo restante da licença."""
+    def _tick():
+        try:
+            label_widget.config(text=get_tempo_restante_licenca_str())
+        except Exception:
+            pass
+        try:
+            root_widget.after(int(interval_ms), _tick)
+        except Exception:
+            pass
+    _tick()
+
+def mostrar_dialogo_licenca(master=None):
+    """Exige uma chave válida para liberar o app. Retorna True se ativar."""
+    try:
+        ok, _msg = licenca_valida_local()
+        if ok:
+            return True
+    except Exception:
+        pass
+
+    # Evita conflito de múltiplos Tk(): cria root temporário e destrói no fim.
+    tmp_root = None
+    try:
+        if master is None:
+            tmp_root = tk.Tk()
+            tmp_root.withdraw()
+            master = tmp_root
+    except Exception:
+        master = None
+
+    machine_id = get_machine_id()
+    win = tk.Toplevel(master) if master else tk.Tk()
+    win.title("Ativação do Sistema - Licença")
+    win.resizable(False, False)
+    win.geometry("560x320")
+
+    frm = ttk.Frame(win, padding=14)
+    frm.pack(fill="both", expand=True)
+
+    ttk.Label(frm, text="Licença necessária para liberar o sistema.", font=("Segoe UI", 12, "bold")).pack(anchor="w")
+    ttk.Label(frm, text="Cole a chave de acesso recebida.\nA licença é válida por 30 dias e expira ao fim do dia do vencimento.", font=("Segoe UI", 10)).pack(anchor="w", pady=(6, 10))
+
+    ttk.Label(frm, text=f"ID deste computador: {machine_id[:8]}…", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 8))
+
+    ttk.Label(frm, text="Chave:", font=("Segoe UI", 10)).pack(anchor="w")
+    ent = ttk.Entry(frm, width=46)
+    ent.pack(anchor="w", pady=6)
+
+    lbl_status = ttk.Label(frm, text="", foreground="red")
+    lbl_status.pack(anchor="w", pady=(6, 0))
+
+    result = {"ok": False}
+
+    def _ativar():
+        key = ent.get().strip()
+        ok, msg, exp = validar_chave_licenca(key, machine_id)
+        if not ok:
+            lbl_status.config(text=msg)
+            return
+        salvar_licenca_db(machine_id, key, exp)
+        result["ok"] = True
+        try:
+            win.destroy()
+        except Exception:
+            pass
+
+    def _sair():
+        result["ok"] = False
+        try:
+            win.destroy()
+        except Exception:
+            pass
+
+    btns = ttk.Frame(frm)
+    btns.pack(fill="x", pady=14)
+    ttk.Button(btns, text="Sair", style="Secondary.TButton", command=_sair).pack(side="right", padx=6)
+    ttk.Button(btns, text="Ativar", style="Success.TButton", command=_ativar).pack(side="right", padx=6)
+
+    win.bind("<Return>", lambda e: _ativar())
+    win.protocol("WM_DELETE_WINDOW", _sair)
+
+    try:
+        win.grab_set()
+        win.focus_force()
+        win.wait_window()
+    except Exception:
+        pass
+
+    try:
+        if tmp_root is not None:
+            tmp_root.destroy()
+    except Exception:
+        pass
+
+    return result["ok"]
+
+
+def enviar_chave_licenca_email(destinatario_email: str, chave: str, expira_iso: str):
+    """Envia a chave de licença por e-mail (texto simples)."""
+    try:
+        cfg = _load_email_config()
+        EMAIL_REMETENTE = cfg.get("EMAIL_GMAIL") or os.getenv("EMAIL_GMAIL")
+        SENHA_APP = cfg.get("EMAIL_GMAIL_APP") or os.getenv("EMAIL_GMAIL_APP")
+        if not EMAIL_REMETENTE or not SENHA_APP:
+            return False, "Credenciais de e-mail não configuradas."
+        if not destinatario_email or "@" not in destinatario_email:
+            return False, "E-mail inválido."
+
+        msg = EmailMessage()
+        msg["Subject"] = "Chave de acesso - Licença (30 dias)"
+        msg["From"] = EMAIL_REMETENTE
+        msg["To"] = destinatario_email
+        msg.set_content(
+            f"""Olá!
+
+"
+            f"Segue sua chave de acesso (válida por {LICENCA_DIAS} dias):
+
+"
+            f"CHAVE: {chave}
+"
+            f"Válida até: {expira_iso} (fim do dia)
+
+"
+            f"Cole esta chave na tela de ativação do sistema.
+
+"
+            f"Atenciosamente,
+BESIM COMPANY
+"""
+        )
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=20) as smtp:
+            smtp.login(EMAIL_REMETENTE, SENHA_APP)
+            smtp.send_message(msg)
+        return True, "OK"
+    except Exception as e:
+        return False, f"Falha ao enviar e-mail: {e}"
+
+
+def admin_gerar_enviar_licenca_dialog(master):
+    """Ferramenta simples (admin) para gerar e enviar chave para um cliente."""
+    try:
+        win = tk.Toplevel(master)
+        win.title("Licença (Admin) - Gerar/Enviar Chave")
+        win.resizable(False, False)
+        win.geometry("560x320")
+
+        frm = ttk.Frame(win, padding=14)
+        frm.pack(fill="both", expand=True)
+
+        ttk.Label(frm, text="Gerar e enviar chave de licença (30 dias)", font=("Segoe UI", 12, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
+
+        ttk.Label(frm, text="E-mail do cliente:").grid(row=1, column=0, sticky="w")
+        ent_email = ttk.Entry(frm, width=40)
+        ent_email.grid(row=1, column=1, sticky="w", pady=4)
+
+        ttk.Label(frm, text="ID do PC do cliente (8 primeiros):").grid(row=2, column=0, sticky="w")
+        ent_mid8 = ttk.Entry(frm, width=16)
+        ent_mid8.grid(row=2, column=1, sticky="w", pady=4)
+
+        ttk.Label(frm, text="Obs.: o cliente vê esse ID na tela de ativação.").grid(row=3, column=1, sticky="w", pady=(0, 8))
+
+        lbl_out = ttk.Label(frm, text="", foreground="#6b7280")
+        lbl_out.grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
+
+        def _gerar_e_enviar():
+            email = (ent_email.get() or "").strip()
+            mid8 = (ent_mid8.get() or "").strip().upper()
+            if len(mid8) != 8:
+                messagebox.showwarning("Atenção", "Informe os 8 primeiros caracteres do ID do PC do cliente.")
+                return
+            exp = _add_days_iso(LICENCA_DIAS)
+            fake_mid = mid8 + "0" * 56
+            chave = gerar_chave_licenca(exp, fake_mid)
+            ok, msg = enviar_chave_licenca_email(email, chave, exp)
+            if ok:
+                try:
+                    win.clipboard_clear(); win.clipboard_append(chave)
+                except Exception:
+                    pass
+                lbl_out.config(text=f"Chave enviada! Válida até {exp} (fim do dia). (Chave copiada)")
+                messagebox.showinfo("Licença", f"""Chave enviada para {email}.
+Válida até {exp} (fim do dia).
+
+Chave: {chave}""")
+            else:
+                messagebox.showerror("Licença", msg)
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=5, column=0, columnspan=2, sticky="e", pady=14)
+        ttk.Button(btns, text="Fechar", style="Secondary.TButton", command=win.destroy).pack(side="right", padx=6)
+        ttk.Button(btns, text="Gerar e Enviar", style="Success.TButton", command=_gerar_e_enviar).pack(side="right", padx=6)
+
+        frm.grid_columnconfigure(1, weight=1)
+        try:
+            win.transient(master)
+            win.grab_set()
+        except Exception:
+            pass
+    except Exception as ex:
+        logging.error(f"Erro ao abrir diálogo de licença admin: {ex}")
 # ===================== EXCEPTIONS TK (assinatura corrigida) =====================
 def setup_global_exception_handlers(tk_root: tk.Misc):
     def excepthook(exc_type, exc_value, exc_tb):
@@ -2113,6 +2456,53 @@ def gerar_relatorio_vendas_mes_pdf(ano: int = None, mes: int = None, top_n: int 
     valores = [total_por_data.get(dt, 0.0) for dt in datas]
     total_mes = float(sum(valores))
 
+    # Totais de manutenções (OS) no mês (data armazenada como dd/mm/aaaa)
+    # - valor_total_os: soma de todas as OS registradas no mês
+    # - valor_total_os_aprov: soma somente das OS aprovadas (que entram no caixa)
+    cursor.execute(
+        """
+        SELECT COALESCE(SUM(COALESCE(valor,0)),0)
+        FROM manutencao
+        WHERE substr(data,4,2)=? AND substr(data,7,4)=?
+        """,
+        (mm, yyyy),
+    )
+    valor_total_os = float((cursor.fetchone() or [0])[0] or 0.0)
+
+    cursor.execute(
+        """
+        SELECT COALESCE(SUM(COALESCE(valor,0)),0)
+        FROM manutencao
+        WHERE COALESCE(aprovado,0)=1 AND substr(data,4,2)=? AND substr(data,7,4)=?
+        """,
+        (mm, yyyy),
+    )
+    valor_total_os_aprov = float((cursor.fetchone() or [0])[0] or 0.0)
+
+    cursor.execute(
+        """
+        SELECT COUNT(1)
+        FROM manutencao
+        WHERE substr(data,4,2)=? AND substr(data,7,4)=?
+        """,
+        (mm, yyyy),
+    )
+    qtd_os = int((cursor.fetchone() or [0])[0] or 0)
+
+    cursor.execute(
+        """
+        SELECT COUNT(1)
+        FROM manutencao
+        WHERE COALESCE(aprovado,0)=1 AND substr(data,4,2)=? AND substr(data,7,4)=?
+        """,
+        (mm, yyyy),
+    )
+    qtd_os_aprov = int((cursor.fetchone() or [0])[0] or 0)
+
+    # Total geral do mês: vendas (tabela vendas) + manutenções aprovadas (tabela manutencao)
+    total_geral_mes = float(total_mes + valor_total_os_aprov)
+
+
     # Totais por forma de pagamento
     cursor.execute(
         """
@@ -2188,11 +2578,19 @@ def gerar_relatorio_vendas_mes_pdf(ano: int = None, mes: int = None, top_n: int 
     c.drawString(40, 745, f"Relatório Mensal de Vendas — {mes:02d}/{ano:04d}")
     c.setFont("Helvetica", 11)
     c.drawString(40, 728, "-" * 110)
-
     # Resumo
     y = 705
     c.setFont("Helvetica-Bold", 12)
-    c.drawString(40, y, f"Total do mês: R$ {total_mes:.2f}")
+    c.drawString(40, y, f"Total do mês (vendas): R$ {total_mes:.2f}")
+    y -= 16
+    c.setFont("Helvetica", 11)
+    c.drawString(
+        40, y,
+        f"Manutenções (OS): R$ {valor_total_os:.2f}  |  Aprovadas: R$ {valor_total_os_aprov:.2f}  |  OS: {qtd_os} (Aprov.: {qtd_os_aprov})"
+    )
+    y -= 16
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(40, y, f"TOTAL GERAL (vendas + manutenções aprovadas): R$ {total_geral_mes:.2f}")
     y -= 18
     c.setFont("Helvetica", 11)
     c.drawString(
@@ -2204,26 +2602,26 @@ def gerar_relatorio_vendas_mes_pdf(ano: int = None, mes: int = None, top_n: int 
     # Gráfico
     if chart_ok:
         try:
-            c.drawImage(ImageReader(chart_path), 40, 510, width=520, height=220,
+            c.drawImage(ImageReader(chart_path), 40, 395, width=520, height=220,
                         preserveAspectRatio=True, mask="auto")
         except Exception:
             chart_ok = False
 
     if not chart_ok:
         c.setFont("Helvetica", 10)
-        c.drawString(40, 675, "(Gráfico indisponível — matplotlib não encontrado. Relatório gerado sem gráfico.)")
+        c.drawString(40, 625, "(Gráfico indisponível — matplotlib não encontrado. Relatório gerado sem gráfico.)")
 
     # Ranking
     c.setFont("Helvetica-Bold", 11)
-    c.drawString(40, 490, f"Ranking TOP {top_n} de produtos (por valor vendido)")
+    c.drawString(40, 375, f"Ranking TOP {top_n} de produtos (por valor vendido)")
     c.setFont("Helvetica", 10)
-    c.drawString(40, 478, "#")
-    c.drawString(60, 478, "Produto")
-    c.drawString(400, 478, "Qtd")
-    c.drawString(520, 478, "Valor")
-    c.drawString(40, 472, "-" * 110)
+    c.drawString(40, 363, "#")
+    c.drawString(60, 363, "Produto")
+    c.drawString(400, 363, "Qtd")
+    c.drawString(520, 363, "Valor")
+    c.drawString(40, 357, "-" * 110)
 
-    y = 456
+    y = 341
     c.setFont("Helvetica", 10)
     if not ranking:
         c.drawString(40, y, "Nenhuma venda registrada neste mês.")
@@ -2493,6 +2891,10 @@ def abrir_sistema_com_logo(username, login_win):
             menu_sessao.add_separator()
 
             menu_sessao.add_command(label="Usuários (Admin)…", command=abrir_gerenciar_usuarios)
+            try:
+                menu_sessao.add_command(label="Licença (Admin)…", command=lambda: admin_gerar_enviar_licenca_dialog(root))
+            except Exception:
+                pass
 
         except Exception:
 
@@ -4823,6 +5225,14 @@ def abrir_sistema_com_logo(username, login_win):
     lbl_status_user = tk.Label(statusbar, text=f"Usuário: {username}", bg=palette['panel'], fg=palette['muted'], font=("Segoe UI", 9))
     lbl_status_user.pack(side='right', padx=10, pady=6)
 
+    # --- Licença (tempo restante) na Status Bar ---
+    lbl_status_licenca = tk.Label(statusbar, text=get_tempo_restante_licenca_str(), bg=palette['panel'], fg=palette['muted'], font=('Segoe UI', 9))
+    lbl_status_licenca.pack(side='left', padx=10, pady=6)
+    try:
+        bind_licenca_statusbar_auto_update(root, lbl_status_licenca, interval_ms=60000)
+    except Exception:
+        pass
+
     lbl_status_clock = tk.Label(statusbar, text="", bg=palette['panel'], fg=palette['muted'], font=("Segoe UI", 9))
     lbl_status_clock.pack(side='right', padx=10, pady=6)
 
@@ -5119,6 +5529,11 @@ def abrir_login():
 # ===================== MAIN =====================
 if __name__ == "__main__":
     try:
+        # >>> NOVO: Bloqueio por licença (30 dias)
+        if not mostrar_dialogo_licenca():
+            try: sys.exit(0)
+            except Exception: os._exit(0)
+
         abrir_login()
     except Exception:
         logging.error("Erro ao iniciar a aplicação", exc_info=True)
