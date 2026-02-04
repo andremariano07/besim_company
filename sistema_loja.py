@@ -272,11 +272,217 @@ def backup_bulk_dir(local_dir: str, tipo: str):
             logging.info(f"Backup em lote de {local_dir} -> {destino_dir}")
     except Exception as ex:
         logging.error(f"Falha no backup em lote: {ex}", exc_info=True)
+
+
+# ===================== STATUSBAR GLOBAL (VERSÃO + LICENÇA) =====================
+# Objetivo: exibir em TODAS as janelas (Tk e Toplevel) um rodapé com:
+# - Versão local (arquivo VERSION; fallback APP_VERSION)
+# - Dias restantes da licença (get_tempo_restante_licenca_str)
+# - Relógio (HH:MM:SS)
+# Implementação: hook seguro no __init__ de tk.Tk e tk.Toplevel.
+
+_STATUSBAR_HOOK_INSTALLED = False
+
+def _statusbar_text_version_and_license():
+    try:
+        ver = get_local_version()
+    except Exception:
+        ver = APP_VERSION
+    try:
+        lic = get_tempo_restante_licenca_str()
+    except Exception:
+        lic = 'Licença: indisponível'
+    return f"v{ver} • {lic}"
+
+def _install_global_statusbar_hook():
+    global _STATUSBAR_HOOK_INSTALLED
+    if _STATUSBAR_HOOK_INSTALLED:
+        return
+    _STATUSBAR_HOOK_INSTALLED = True
+
+    # Guarda init originais
+    _orig_tk_init = tk.Tk.__init__
+    _orig_top_init = tk.Toplevel.__init__
+
+    def _attach_statusbar_later(win):
+        """Anexa rodapé se janela for 'normal' (não overrideredirect) e ainda não tiver rodapé."""
+        try:
+            if getattr(win, '_no_statusbar', False):
+                return
+            if getattr(win, '_statusbar_attached', False):
+                return
+            # se for splash/overlay, costuma ser overrideredirect=True
+            try:
+                if bool(win.overrideredirect()):
+                    return
+            except Exception:
+                pass
+
+            # Cria container
+            bar = tk.Frame(win, bd=1, relief='flat')
+            bar.pack(side='bottom', fill='x', pady=(0, 4))
+
+            # Esquerda: versão + licença
+            lbl_left = tk.Label(bar, text=_statusbar_text_version_and_license(), anchor='w', padx=10)
+            lbl_left.pack(side='left')
+
+            # Direita: relógio
+            lbl_clock = tk.Label(bar, text='', anchor='e', padx=10)
+            lbl_clock.pack(side='right')
+
+            # Atualiza licença periodicamente (1 min)
+            def _tick_license():
+                try:
+                    lbl_left.config(text=_statusbar_text_version_and_license())
+                except Exception:
+                    return
+                try:
+                    win.after(60000, _tick_license)
+                except Exception:
+                    pass
+            _tick_license()
+
+            # Relógio (1s)
+            import datetime as _dt
+            def _tick_clock():
+                try:
+                    lbl_clock.config(text=_dt.datetime.now().strftime('%H:%M:%S'))
+                except Exception:
+                    return
+                try:
+                    win.after(1000, _tick_clock)
+                except Exception:
+                    pass
+            _tick_clock()
+
+            # Marca referências
+            win._statusbar_attached = True
+            win._statusbar_widget = bar
+            win._statusbar_left = lbl_left
+            win._statusbar_clock = lbl_clock
+
+            # Aplica tema (se existir infraestrutura)
+            try:
+                if 'current_theme' in globals() and isinstance(globals().get('current_theme'), dict):
+                    pal = globals().get('current_theme')
+                    # melhor esforço: pode ser dict com chaves bg/panel/text/muted
+                    bg = pal.get('panel') or pal.get('bg')
+                    fg = pal.get('muted') or pal.get('text')
+                    if bg:
+                        bar.configure(bg=bg)
+                        lbl_left.configure(bg=bg)
+                        lbl_clock.configure(bg=bg)
+                    if fg:
+                        lbl_left.configure(fg=fg)
+                        lbl_clock.configure(fg=fg)
+            except Exception:
+                pass
+
+        except Exception:
+            # Nunca quebrar criação de janelas
+            return
+
+    def _tk_init_hook(self, *args, **kwargs):
+        _orig_tk_init(self, *args, **kwargs)
+        try:
+            # agenda após a janela existir
+            self.after(1, lambda: _attach_statusbar_later(self))
+        except Exception:
+            try:
+                _attach_statusbar_later(self)
+            except Exception:
+                pass
+
+    def _top_init_hook(self, *args, **kwargs):
+        _orig_top_init(self, *args, **kwargs)
+        try:
+            self.after(1, lambda: _attach_statusbar_later(self))
+        except Exception:
+            try:
+                _attach_statusbar_later(self)
+            except Exception:
+                pass
+
+    tk.Tk.__init__ = _tk_init_hook
+    tk.Toplevel.__init__ = _top_init_hook
+
+# Instala o hook o quanto antes
+try:
+    _install_global_statusbar_hook()
+except Exception:
+    pass
+# =================== FIM STATUSBAR GLOBAL ===================
+
+# --- FORÇA STATUSBAR NA JANELA PRINCIPAL (fallback) ---
+# Em alguns ambientes o hook global pode não anexar por timing/tema.
+# Este fallback cria/mostra o rodapé explicitamente quando chamado.
+def force_attach_statusbar(win):
+    try:
+        if win is None or not hasattr(win, 'winfo_exists') or not win.winfo_exists():
+            return
+        # Se já existe, apenas garanta que está visível
+        bar = getattr(win, '_statusbar_widget', None)
+        if bar is not None and hasattr(bar, 'winfo_exists') and bar.winfo_exists():
+            try:
+                bar.pack_forget()
+            except Exception:
+                pass
+            bar.pack(side='bottom', fill='x', pady=(0, 4))
+            try:
+                bar.lift()
+            except Exception:
+                pass
+            return
+        # Caso não exista, cria igual ao hook, porém com altura/relief para ficar visível
+        bar = tk.Frame(win, bd=1, relief='groove')
+        bar.pack(side='bottom', fill='x', pady=(0, 4))
+        lbl_left = tk.Label(bar, text=_statusbar_text_version_and_license(), anchor='w', padx=10)
+        lbl_left.pack(side='left')
+        lbl_clock = tk.Label(bar, text='', anchor='e', padx=10)
+        lbl_clock.pack(side='right')
+        import datetime as _dt
+        def _tick_license():
+            try:
+                lbl_left.config(text=_statusbar_text_version_and_license())
+                win.after(60000, _tick_license)
+            except Exception:
+                return
+        def _tick_clock():
+            try:
+                lbl_clock.config(text=_dt.datetime.now().strftime('%H:%M:%S'))
+                win.after(1000, _tick_clock)
+            except Exception:
+                return
+        _tick_license(); _tick_clock()
+        win._statusbar_attached = True
+        win._statusbar_widget = bar
+        win._statusbar_left = lbl_left
+        win._statusbar_clock = lbl_clock
+        # tema best-effort
+        try:
+            if 'current_theme' in globals() and isinstance(globals().get('current_theme'), dict):
+                pal = globals().get('current_theme')
+                bg = pal.get('panel') or pal.get('bg')
+                fg = pal.get('muted') or pal.get('text')
+                if bg:
+                    bar.configure(bg=bg)
+                    lbl_left.configure(bg=bg)
+                    lbl_clock.configure(bg=bg)
+                if fg:
+                    lbl_left.configure(fg=fg)
+                    lbl_clock.configure(fg=fg)
+        except Exception:
+            pass
+    except Exception:
+        return
+# --- FIM FORÇA STATUSBAR ---
+
+
 # ===================== CONFIGURAÇÕES =====================
 DISABLE_AUTO_UPDATE = (
     False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "4.7"
+APP_VERSION = "4.8"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -531,42 +737,45 @@ def start_agendamento_notify_on_open(root_widget):
 # ===================== BANCO =====================
 conn = sqlite3.connect(DB_PATH)
 cursor = conn.cursor()
+# >>> NOVO: agendamento de retirada de celulares
 cursor.execute(
     """
-CREATE TABLE IF NOT EXISTS clientes (
-    cpf TEXT PRIMARY KEY,
-    nome TEXT,
-    telefone TEXT
+CREATE TABLE IF NOT EXISTS agendamentos_celulares (
+    data_iso TEXT PRIMARY KEY,
+    responsavel TEXT,
+    atualizado_em TEXT
 )
 """
 )
+conn.commit()
+
+# >>> NOVO: Licença do app (1 instalação = 1 licença ativa)
 cursor.execute(
-    """
-CREATE TABLE IF NOT EXISTS produtos (
-    codigo TEXT PRIMARY KEY,
-    nome TEXT,
-    tipo TEXT,
-    custo REAL,
-    preco REAL,
-    estoque INTEGER
+    """CREATE TABLE IF NOT EXISTS app_licenca (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    machine_id TEXT,
+    chave TEXT,
+    expira_em TEXT,        -- ISO: YYYY-MM-DD
+    ativada_em TEXT,       -- ISO: YYYY-MM-DD HH:MM:SS
+    atualizado_em TEXT     -- ISO: YYYY-MM-DD HH:MM:SS
 )
 """
 )
+conn.commit()
+
+
+
+# >>> NOVO: meta de app (flags de migração)
 cursor.execute(
     """
-CREATE TABLE IF NOT EXISTS vendas (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    cliente TEXT,
-    cpf TEXT,
-    produto TEXT,
-    quantidade INTEGER,
-    total REAL,
-    pagamento TEXT,
-    data TEXT,
-    hora TEXT
+CREATE TABLE IF NOT EXISTS app_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT
 )
 """
 )
+conn.commit()
+
 # >>> ATUALIZADO: tabela caixa já contempla hora e motivo para novos bancos
 cursor.execute(
     """
@@ -579,6 +788,28 @@ CREATE TABLE IF NOT EXISTS caixa (
 )
 """
 )
+cursor.execute(
+    """
+CREATE TABLE IF NOT EXISTS clientes (
+    cpf TEXT PRIMARY KEY,
+    nome TEXT,
+    telefone TEXT
+)
+"""
+)
+cursor.execute(
+    """
+CREATE TABLE IF NOT EXISTS devolucoes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item TEXT,
+    motivo TEXT,
+    nome TEXT,
+    data TEXT,
+    hora TEXT
+)
+"""
+)
+conn.commit()
 cursor.execute(
     """
 CREATE TABLE IF NOT EXISTS fechamento_caixa (
@@ -602,67 +833,6 @@ CREATE TABLE IF NOT EXISTS manutencao (
 )
 """
 )
-cursor.execute(
-    """
-CREATE TABLE IF NOT EXISTS users (
-    username TEXT PRIMARY KEY,
-    password_hash TEXT,
-    is_admin INTEGER DEFAULT 0
-)
-"""
-)
-cursor.execute(
-    """
-CREATE TABLE IF NOT EXISTS devolucoes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    item TEXT,
-    motivo TEXT,
-    nome TEXT,
-    data TEXT,
-    hora TEXT
-)
-"""
-)
-conn.commit()
-# >>> NOVO: agendamento de retirada de celulares
-cursor.execute(
-    """
-CREATE TABLE IF NOT EXISTS agendamentos_celulares (
-    data_iso TEXT PRIMARY KEY,
-    responsavel TEXT,
-    atualizado_em TEXT
-)
-"""
-)
-conn.commit()
-
-# >>> NOVO: meta de app (flags de migração)
-cursor.execute(
-    """
-CREATE TABLE IF NOT EXISTS app_meta (
-    key TEXT PRIMARY KEY,
-    value TEXT
-)
-"""
-)
-conn.commit()
-
-# >>> NOVO: Licença do app (1 instalação = 1 licença ativa)
-cursor.execute(
-    """CREATE TABLE IF NOT EXISTS app_licenca (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    machine_id TEXT,
-    chave TEXT,
-    expira_em TEXT,        -- ISO: YYYY-MM-DD
-    ativada_em TEXT,       -- ISO: YYYY-MM-DD HH:MM:SS
-    atualizado_em TEXT     -- ISO: YYYY-MM-DD HH:MM:SS
-)
-"""
-)
-conn.commit()
-
-
-
 # >>> NOVO: Pontuação (Programa de Pontos)
 cursor.execute(
     """
@@ -676,6 +846,18 @@ CREATE TABLE IF NOT EXISTS pontuacao (
 
 cursor.execute(
     """
+CREATE TABLE IF NOT EXISTS produtos (
+    codigo TEXT PRIMARY KEY,
+    nome TEXT,
+    tipo TEXT,
+    custo REAL,
+    preco REAL,
+    estoque INTEGER
+)
+"""
+)
+cursor.execute(
+    """
 CREATE TABLE IF NOT EXISTS resgates_pontos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     cpf TEXT,
@@ -687,6 +869,30 @@ CREATE TABLE IF NOT EXISTS resgates_pontos (
 """
 )
 conn.commit()
+cursor.execute(
+    """
+CREATE TABLE IF NOT EXISTS users (
+    username TEXT PRIMARY KEY,
+    password_hash TEXT,
+    is_admin INTEGER DEFAULT 0
+)
+"""
+)
+cursor.execute(
+    """
+CREATE TABLE IF NOT EXISTS vendas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cliente TEXT,
+    cpf TEXT,
+    produto TEXT,
+    quantidade INTEGER,
+    total REAL,
+    pagamento TEXT,
+    data TEXT,
+    hora TEXT
+)
+"""
+)
 # <<< FIM NOVO: Pontuação
 # ====== UTIL: hash de senha / migrações ======
 def hash_password(pw: str) -> str:
@@ -1457,6 +1663,134 @@ def bring_app_to_front():
     except Exception:
         pass
 
+
+
+# ===================== FERRAMENTA: ABRIR 3uTools (Windows) =====================
+def abrir_3utools(parent=None):
+    """Abre o 3uTools diretamente pelo executável no Windows."""
+    caminho = r"C:\\Program Files (x86)\\3uToolsV3\\3uTools.exe"
+    try:
+        if not os.path.exists(caminho):
+            try:
+                messagebox.showerror("Erro", f"O 3uTools não foi encontrado neste caminho:\n{caminho}", parent=parent)
+            except Exception:
+                messagebox.showerror("Erro", f"O 3uTools não foi encontrado neste caminho:\n{caminho}")
+            return
+        os.startfile(caminho)
+    except Exception as ex:
+        try:
+            messagebox.showerror("Erro", f"Falha ao abrir 3uTools:\n{ex}", parent=parent)
+        except Exception:
+            messagebox.showerror("Erro", f"Falha ao abrir 3uTools:\n{ex}")
+
+
+# ===================== FERRAMENTAS (atalhos com ícones) =====================
+def _criar_icone_placeholder(texto: str, bg: str = '#2563eb', size: int = 64):
+    """Cria um ícone simples em memória (placeholder) com iniciais.
+    Não depende de arquivos .png/.ico no PC do cliente.
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont, ImageTk
+        img = Image.new('RGBA', (size, size), bg)
+        draw = ImageDraw.Draw(img)
+        t = (texto or '').strip()[:4].upper()
+        try:
+            font = ImageFont.truetype('arial.ttf', int(size * 0.36))
+        except Exception:
+            font = ImageFont.load_default()
+        try:
+            bbox = draw.textbbox((0, 0), t, font=font)
+            tw = bbox[2] - bbox[0]
+            th = bbox[3] - bbox[1]
+        except Exception:
+            tw, th = draw.textsize(t, font=font)
+        x = (size - tw) // 2
+        y = (size - th) // 2
+        draw.text((x+1, y+1), t, font=font, fill=(0,0,0,110))
+        draw.text((x, y), t, font=font, fill='white')
+        return ImageTk.PhotoImage(img)
+    except Exception:
+        return None
+
+def _abrir_programa_por_caminhos(nome: str, caminhos: list, parent=None):
+    """Tenta abrir um programa pelo primeiro caminho existente (Windows)."""
+    try:
+        for p in (caminhos or []):
+            p = (p or '').strip()
+            if p and os.path.exists(p):
+                os.startfile(p)
+                return True
+        msg = 'Não foi possível localizar o ' + str(nome) + ' nos caminhos configurados.\n' + '\n'.join(caminhos or [])
+        try:
+            messagebox.showerror('Erro', msg, parent=parent)
+        except Exception:
+            messagebox.showerror('Erro', msg)
+        return False
+    except Exception as ex:
+        try:
+            messagebox.showerror('Erro', 'Falha ao abrir ' + str(nome) + ':\n' + str(ex), parent=parent)
+        except Exception:
+            messagebox.showerror('Erro', 'Falha ao abrir ' + str(nome) + ':\n' + str(ex))
+        return False
+
+def montar_aba_ferramentas(abas: ttk.Notebook, root_win):
+    """Cria a aba Ferramentas com botões em formato de ícone."""
+    aba_ferramentas = ttk.Frame(abas, padding=10)
+    # insere perto do início para ficar visível mesmo com muitas abas
+    try:
+        abas.insert(1, aba_ferramentas, text='Ferramentas')
+    except Exception:
+        abas.add(aba_ferramentas, text='Ferramentas')
+
+    try:
+        ttk.Label(aba_ferramentas, text='Atalhos rápidos', font=('Segoe UI', 12, 'bold')).grid(row=0, column=0, columnspan=4, sticky='w', pady=(0, 12))
+    except Exception:
+        pass
+
+    programas = [
+        {'nome': '3uTools', 'iniciais': '3U', 'cor': '#2563eb', 'caminhos': [
+            r'C:\\Program Files (x86)\\3uToolsV3\\x86\\3uToolsV3.exe',
+            r'C:\\Program Files (x86)\\3uToolsV3\\3uTools.exe',
+        ]},
+        {'nome': 'Software Fix', 'iniciais': 'SF', 'cor': '#16a34a', 'caminhos': [
+            r'C:\\Program Files\\Software Fix\\Software Fix.exe',
+            r'C:\\Program Files\\Software Fix Software Fix.exe',
+        ]},
+        {'nome': 'SamFwTool', 'iniciais': 'SAM', 'cor': '#f59e0b', 'caminhos': [
+            r'C:\\SamFwTool\\SamFwTool.exe',
+        ]},
+    ]
+
+    cols = 4
+    for c in range(cols):
+        try:
+            aba_ferramentas.columnconfigure(c, weight=1)
+        except Exception:
+            pass
+
+    aba_ferramentas._tool_icons = []
+    for idx, p in enumerate(programas):
+        r = 1 + (idx // cols)
+        c = idx % cols
+        icon = _criar_icone_placeholder(p.get('iniciais', p.get('nome','')[:2]), p.get('cor', '#2563eb'), size=64)
+        if icon is not None:
+            aba_ferramentas._tool_icons.append(icon)
+        btn = ttk.Button(
+            aba_ferramentas,
+            text=p.get('nome','Programa'),
+            image=icon if icon else '',
+            compound='top',
+            style='Accent.TButton',
+            command=lambda pp=p: _abrir_programa_por_caminhos(pp.get('nome','Programa'), pp.get('caminhos', []), parent=root_win)
+        )
+        btn.grid(row=r, column=c, padx=12, pady=12, sticky='nsew')
+        try:
+            add_tooltip(btn, 'Abrir ' + str(p.get('nome','Programa')))
+        except Exception:
+            pass
+    return aba_ferramentas
+
+# ===================== FIM FERRAMENTAS =====================
 
 # ===================== TOAST (não-bloqueante) — Premium + Empilhado =====================
 _ACTIVE_TOAST_ROOT = None
@@ -3138,6 +3472,111 @@ def montar_aba_resumo_dashboard(abas: ttk.Notebook, conn: sqlite3.Connection, cu
 
 # ================= FIM DASHBOARD =================
 
+
+# ===================== NOTEBOOK: ORDENAR ABAS (UI) =====================
+def reorder_notebook_tabs_alphabetical(abas: 'ttk.Notebook'):
+    """Reordena as abas do ttk.Notebook em ordem alfabética (conforme labels).
+
+    Mantém frames e widgets; apenas remove e adiciona novamente as abas na ordem desejada.
+    Se alguma aba não existir, ela é ignorada.
+    Abas não listadas explicitamente serão mantidas ao final, preservando a ordem atual.
+    """
+    try:
+        desired = [
+            'Agendamento',
+            'Caixa',
+            'Clientes',
+            'Devolução',
+            'Estoque',
+            'Ferramentas',
+            'Manutenção',
+            'Pontuação',
+            'Resumo',
+            'Upgrade',
+            'Vendas',
+        ]
+        current_tabs = list(abas.tabs())
+        if not current_tabs:
+            return
+
+        selected = abas.select()
+
+        tab_info = {}
+        for tid in current_tabs:
+            try:
+                w = abas.nametowidget(tid)
+            except Exception:
+                w = None
+
+            cfg = {}
+            for opt in ('text', 'image', 'compound', 'underline', 'sticky', 'state'):
+                try:
+                    cfg[opt] = abas.tab(tid, opt)
+                except Exception:
+                    pass
+
+            tab_info[tid] = {
+                'widget': w,
+                'cfg': cfg,
+                'text': cfg.get('text', ''),
+            }
+
+        # Remove todas as abas
+        for tid in current_tabs:
+            try:
+                abas.forget(tid)
+            except Exception:
+                pass
+
+        used = set()
+
+        def _add_tab(widget, cfg, fallback_text=''):
+            try:
+                cfg2 = {k: v for k, v in (cfg or {}).items()
+                        if k in ('text','image','compound','underline','sticky','state') and v not in (None, '')}
+                if 'text' not in cfg2 and fallback_text:
+                    cfg2['text'] = fallback_text
+                abas.add(widget, **cfg2)
+                return
+            except Exception:
+                try:
+                    abas.add(widget, text=fallback_text or '')
+                except Exception:
+                    pass
+
+        # Re-adiciona na ordem desejada
+        for label in desired:
+            tid = next((t for t, info in tab_info.items() if str(info.get('text','')) == label), None)
+            if not tid:
+                continue
+            info = tab_info.get(tid) or {}
+            w = info.get('widget')
+            if w is None:
+                continue
+            _add_tab(w, info.get('cfg') or {}, fallback_text=label)
+            used.add(tid)
+
+        # Abas restantes no final
+        for tid in current_tabs:
+            if tid in used:
+                continue
+            info = tab_info.get(tid) or {}
+            w = info.get('widget')
+            if w is None:
+                continue
+            _add_tab(w, info.get('cfg') or {}, fallback_text=info.get('text') or '')
+
+        # Restaura seleção
+        try:
+            if selected:
+                abas.select(selected)
+        except Exception:
+            pass
+
+    except Exception:
+        return
+# =================== FIM NOTEBOOK: ORDENAR ABAS ===================
+
 # ================= SISTEMA PRINCIPAL =================
 def abrir_sistema_com_logo(username, login_win):
     root = tk.Toplevel()
@@ -3437,7 +3876,16 @@ def abrir_sistema_com_logo(username, login_win):
     # Notebook
     abas = ttk.Notebook(root)
 
-    abas.pack(fill="both", expand=True, padx=12, pady=(8, 12))
+    abas.pack(fill="both", expand=True, padx=12, pady=(8, 0))
+    # Fallback: garante que o rodapé (statusbar) apareça
+    try:
+        root.after(50, lambda: force_attach_statusbar(root))
+    except Exception:
+        try:
+            force_attach_statusbar(root)
+        except Exception:
+            pass
+
     # ====== RESUMO (Dashboard KPIs) ======
     try:
         montar_aba_resumo_dashboard(abas, conn, cursor)
@@ -3478,6 +3926,22 @@ def abrir_sistema_com_logo(username, login_win):
     abas.add(aba_upgrade, text="Upgrade")
     aba_pontuacao = ttk.Frame(abas, padding=10)
     abas.add(aba_pontuacao, text="Pontuação")
+    # Reordena as abas em ordem alfabética (UI)
+    try:
+        reorder_notebook_tabs_alphabetical(abas)
+    except Exception:
+        pass
+
+
+    # Aba Ferramentas (atalhos com ícones)
+    try:
+        montar_aba_ferramentas(abas, root)
+    except Exception as _ex_tools:
+        try:
+            logging.error(f'Falha ao montar aba Ferramentas: {_ex_tools}', exc_info=True)
+        except Exception:
+            pass
+
     f_u = ttk.Frame(aba_upgrade, padding=8)
     f_u.pack(fill="x", pady=6)
     ttk.Label(f_u, text="CPF").grid(row=0, column=0, sticky="w", padx=6, pady=4)
@@ -5606,7 +6070,7 @@ def abrir_sistema_com_logo(username, login_win):
 
     # ====== STATUS BAR (versão | backup | usuário | data/hora) ======
     statusbar = tk.Frame(root, bg=palette['panel'], highlightbackground=palette['border'], highlightthickness=1)
-    statusbar.pack(side='bottom', fill='x')
+    statusbar.pack(side='bottom', fill='x', pady=(0, 4))
 
     lbl_status_left = tk.Label(statusbar, text=f"v{get_local_version()}", bg=palette['panel'], fg=palette['muted'], font=("Segoe UI", 9))
     lbl_status_left.pack(side='left', padx=10, pady=6)
