@@ -37,6 +37,8 @@ from functools import partial
 from reportlab.lib.pagesizes import A4
 import smtplib
 from email.message import EmailMessage
+from email.utils import make_msgid
+import mimetypes
 from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 import subprocess
@@ -274,7 +276,7 @@ def backup_bulk_dir(local_dir: str, tipo: str):
 DISABLE_AUTO_UPDATE = (
     False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "4.6"
+APP_VERSION = "4.7"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -1237,8 +1239,14 @@ def mostrar_dialogo_licenca(master=None):
     return result["ok"]
 
 
+
+
 def enviar_chave_licenca_email(destinatario_email: str, chave: str, expira_iso: str):
-    """Envia a chave de licença por e-mail (texto simples)."""
+    """Envia a chave de licença por e-mail.
+
+    - Envia multipart: texto simples (fallback) + HTML.
+    - Inclui logo centralizada inline (CID) usando o arquivo "Logo_email" (preferência) na pasta do app.
+    """
     try:
         cfg = _load_email_config()
         EMAIL_REMETENTE = cfg.get("EMAIL_GMAIL") or os.getenv("EMAIL_GMAIL")
@@ -1249,28 +1257,96 @@ def enviar_chave_licenca_email(destinatario_email: str, chave: str, expira_iso: 
             return False, "E-mail inválido."
 
         msg = EmailMessage()
-        msg["Subject"] = "Chave de acesso - Licença (30 dias)"
+        msg["Subject"] = f"Chave de acesso - Licença ({LICENCA_DIAS} dias)"
         msg["From"] = EMAIL_REMETENTE
         msg["To"] = destinatario_email
-        msg.set_content(
-            f"""Olá!
 
-"
-            f"Segue sua chave de acesso (válida por {LICENCA_DIAS} dias):
-
-"
-            f"CHAVE: {chave}
-"
-            f"Válida até: {expira_iso} (fim do dia)
-
-"
-            f"Cole esta chave na tela de ativação do sistema.
-
-"
-            f"Atenciosamente,
-BESIM COMPANY
-"""
+        # Fallback em texto simples
+        text = (
+            "Olá!\n\n"
+            f"Segue sua chave de acesso (válida por {LICENCA_DIAS} dias):\n\n"
+            f"CHAVE: {chave}\n"
+            f"Válida até: {expira_iso} (fim do dia)\n\n"
+            "Cole esta chave na tela de ativação do sistema.\n\n"
+            "Atenciosamente,\n"
+            "AM CORPY\n"
         )
+        msg.set_content(text)
+
+        # Logo (inline CID) — preferência: Logo_email.(png/jpg/jpeg) na pasta do app
+        logo_path = None
+        base = os.path.join(os.getcwd(), "Logo_email")
+        for cand in (base + ".png", base + ".jpg", base + ".jpeg", base):
+            if os.path.isfile(cand):
+                logo_path = cand
+                break
+        if not logo_path:
+            cand = os.path.join(os.getcwd(), "logo.png")
+            if os.path.isfile(cand):
+                logo_path = cand
+
+        logo_cid = make_msgid(domain="besim.local")
+        logo_cid_str = logo_cid[1:-1]
+
+        logo_html = ""
+        if logo_path:
+            logo_html = (
+                "<tr>"
+                "<td align='center' style='padding:24px 22px 8px 22px;'>"
+                f"<img src='cid:{logo_cid_str}' alt='BESIM COMPANY' "
+                "style='display:block;max-width:260px;width:260px;height:auto;' />"
+                "</td>"
+                "</tr>"
+            )
+
+        html = f"""<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#f6f7fb;font-family:Segoe UI, Arial, sans-serif;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f7fb;padding:24px 0;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="620" cellpadding="0" cellspacing="0"
+                 style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 6px 18px rgba(0,0,0,.06);">
+            {logo_html}
+            <tr>
+              <td style="padding:0 22px 18px 22px;text-align:center;">
+                <div style="font-size:16px;font-weight:800;color:#111827;">Chave de acesso</div>
+                <div style="font-size:13px;color:#6b7280;">Licença ({LICENCA_DIAS} dias) — válida até {expira_iso} (fim do dia)</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:0 22px 22px 22px;color:#111827;">
+                <p style="margin:0 0 12px 0;font-size:14px;">Olá! 👋</p>
+                <p style="margin:0 0 14px 0;font-size:14px;">Segue sua chave de acesso válida por <b>{LICENCA_DIAS} dias</b>.</p>
+                <div style="background:#f3f4f6;border:1px solid #e5e7eb;border-radius:10px;padding:14px;text-align:left;">
+                  <div style="font-size:12px;color:#6b7280;margin-bottom:6px;">CHAVE</div>
+                  <div style="font-size:16px;font-weight:800;letter-spacing:.5px;font-family:Consolas, monospace;word-break:break-word;">{chave}</div>
+                  <div style="margin-top:10px;font-size:13px;"><b>Válida até:</b> {expira_iso} <span style="color:#6b7280;">(fim do dia)</span></div>
+                </div>
+                <p style="margin:14px 0 0 0;font-size:14px;">👉 Cole esta chave na tela de ativação do sistema.</p>
+                <hr style="border:none;border-top:1px solid #e5e7eb;margin:18px 0;">
+                <p style="margin:0;font-size:13px;color:#374151;">Atenciosamente,<br><b>BESIM COMPANY</b></p>
+              </td>
+            </tr>
+          </table>
+          <div style="width:620px;text-align:center;color:#9ca3af;font-size:12px;margin-top:10px;">Este e-mail foi enviado automaticamente.</div>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
+"""
+        msg.add_alternative(html, subtype="html")
+
+        if logo_path:
+            ctype, _enc = mimetypes.guess_type(logo_path)
+            if not ctype:
+                ctype = "image/png"
+            maintype, subtype = ctype.split("/", 1)
+            with open(logo_path, "rb") as fimg:
+                img_bytes = fimg.read()
+            html_part = msg.get_payload()[-1]
+            html_part.add_related(img_bytes, maintype=maintype, subtype=subtype, cid=logo_cid)
 
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=20) as smtp:
             smtp.login(EMAIL_REMETENTE, SENHA_APP)
@@ -1278,7 +1354,6 @@ BESIM COMPANY
         return True, "OK"
     except Exception as e:
         return False, f"Falha ao enviar e-mail: {e}"
-
 
 def admin_gerar_enviar_licenca_dialog(master):
     """Ferramenta simples (admin) para gerar e enviar chave para um cliente."""
@@ -3199,7 +3274,8 @@ def abrir_sistema_com_logo(username, login_win):
 
             menu_sessao.add_command(label="Usuários (Admin)…", command=abrir_gerenciar_usuarios)
             try:
-                menu_sessao.add_command(label="Licença (Admin)…", command=lambda: admin_gerar_enviar_licenca_dialog(root))
+                # [REMOVIDO] menu_sessao.add_command(label="Licença (Admin)…", command=lambda: admin_gerar_enviar_licenca_dialog(root))
+                pass
             except Exception:
                 pass
 
