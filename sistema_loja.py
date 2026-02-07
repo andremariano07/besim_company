@@ -21,6 +21,23 @@ import sqlite3
 import datetime
 import calendar
 import re
+
+# ===================== UTIL: Datas BR flexíveis =====================
+# Aceita 'd/m/aaaa' ou 'dd/mm/aaaa' e retorna tupla (d, m, a) como ints.
+# Retorna None se não conseguir interpretar.
+def _parse_br_date_flex(s: str):
+    try:
+        s = str(s or '').strip()
+        m = re.match(r'^\s*(\d{1,2})/(\d{1,2})/(\d{4})\s*$', s)
+        if not m:
+            return None
+        d = int(m.group(1)); mo = int(m.group(2)); y = int(m.group(3))
+        if d < 1 or d > 31 or mo < 1 or mo > 12:
+            return None
+        return d, mo, y
+    except Exception:
+        return None
+
 import os
 import sys
 import hashlib
@@ -2624,7 +2641,7 @@ def gerar_os_pdf(os_num, nome, cpf, telefone, descricao, valor):
     bring_app_to_front()
     return nome_arquivo
 # ================= RELATÓRIO VENDAS (PDF) =================
-def gerar_relatorio_vendas_dia_pdf(data_str: str = None):
+def gerar_relatorio_vendas_dia_pdf(data_str: str = None, abrir_pdf: bool = True):
     hoje = datetime.datetime.now().strftime("%d/%m/%Y")
     data_alvo = data_str or hoje
     pasta_rel = os.path.join(os.getcwd(), "relatorios")
@@ -2821,7 +2838,7 @@ def gerar_relatorio_vendas_dia_pdf(data_str: str = None):
 
 
 # ================= RELATÓRIO VENDAS MENSAL (PDF + GRÁFICO + RANKING) =================
-def gerar_relatorio_vendas_mes_pdf(ano: int = None, mes: int = None, top_n: int = 10):
+def gerar_relatorio_vendas_mes_pdf(ano: int = None, mes: int = None, top_n: int = 10, abrir_pdf: bool = True):
     """Gera um relatório mensal com:
 
     - Gráfico (barras + linha) do total de vendas por dia no mês
@@ -2846,112 +2863,90 @@ def gerar_relatorio_vendas_mes_pdf(ano: int = None, mes: int = None, top_n: int 
     mm = f"{mes:02d}"
     yyyy = f"{ano:04d}"
 
-    # Totais por dia (data armazenada como dd/mm/aaaa)
+    # Totais por dia / pagamentos / ranking (robusto para datas com/sem zero à esquerda)
+    total_por_data = {}
+    totais_pg = {"PIX": 0.0, "Cartão": 0.0, "Dinheiro": 0.0, "OUTROS": 0.0}
+    prod_stats = {}  # {produto: {qtd:int, valor:float}}
+
+    # Vendas do ano (filtra por mês/ano em Python para aceitar formatos antigos)
     cursor.execute(
-        """
-        SELECT data, COALESCE(SUM(total),0) as total_dia
-        FROM vendas
-        WHERE substr(data,4,2)=? AND substr(data,7,4)=?
-        GROUP BY data
-        """,
-        (mm, yyyy),
+        "SELECT data, COALESCE(total,0), pagamento, produto, COALESCE(quantidade,0) FROM vendas WHERE data LIKE ?",
+        (f"%/{yyyy}",),
     )
-    rows = cursor.fetchall() or []
-    total_por_data = {str(d): float(v or 0.0) for d, v in rows}
+    for data_raw, tot_raw, pg_raw, prod_raw, qtd_raw in (cursor.fetchall() or []):
+        dmY = _parse_br_date_flex(data_raw)
+        if not dmY:
+            continue
+        d, mo, y = dmY
+        if y != ano or mo != mes:
+            continue
+        key = f"{d:02d}/{mo:02d}/{y:04d}"
+        v = float(tot_raw or 0.0)
+        total_por_data[key] = float(total_por_data.get(key, 0.0) + v)
+
+        # pagamento
+        pg = str(pg_raw or "").strip()
+        if pg.startswith("Upgrade"):
+            totais_pg["OUTROS"] += v
+        elif pg in totais_pg:
+            totais_pg[pg] += v
+        else:
+            totais_pg["OUTROS"] += v
+
+        # produto
+        prod = str(prod_raw or "(sem produto)").strip() or "(sem produto)"
+        st = prod_stats.get(prod) or {"qtd": 0, "valor": 0.0}
+        try:
+            st["qtd"] += int(qtd_raw or 0)
+        except Exception:
+            pass
+        st["valor"] += v
+        prod_stats[prod] = st
 
     # Série completa do mês (dias sem venda = 0)
     last_day = calendar.monthrange(ano, mes)[1]
     dias = list(range(1, last_day + 1))
     datas = [f"{d:02d}/{mes:02d}/{ano:04d}" for d in dias]
-    valores = [total_por_data.get(dt, 0.0) for dt in datas]
+    valores = [float(total_por_data.get(dt, 0.0) or 0.0) for dt in datas]
     total_mes = float(sum(valores))
 
-    # Totais de manutenções (OS) no mês (data armazenada como dd/mm/aaaa)
-    # - valor_total_os: soma de todas as OS registradas no mês
-    # - valor_total_os_aprov: soma somente das OS aprovadas (que entram no caixa)
+    # Totais de manutenções (OS) no mês (robusto)
+    valor_total_os = 0.0
+    valor_total_os_aprov = 0.0
+    qtd_os = 0
+    qtd_os_aprov = 0
     cursor.execute(
-        """
-        SELECT COALESCE(SUM(COALESCE(valor,0)),0)
-        FROM manutencao
-        WHERE substr(data,4,2)=? AND substr(data,7,4)=?
-        """,
-        (mm, yyyy),
+        "SELECT data, COALESCE(valor,0), COALESCE(aprovado,0) FROM manutencao WHERE data LIKE ?",
+        (f"%/{yyyy}",),
     )
-    valor_total_os = float((cursor.fetchone() or [0])[0] or 0.0)
+    for data_raw, val_raw, aprov_raw in (cursor.fetchall() or []):
+        dmY = _parse_br_date_flex(data_raw)
+        if not dmY:
+            continue
+        d, mo, y = dmY
+        if y != ano or mo != mes:
+            continue
+        try:
+            val = float(val_raw or 0.0)
+        except Exception:
+            val = 0.0
+        valor_total_os += val
+        qtd_os += 1
+        if int(aprov_raw or 0) == 1:
+            valor_total_os_aprov += val
+            qtd_os_aprov += 1
 
-    cursor.execute(
-        """
-        SELECT COALESCE(SUM(COALESCE(valor,0)),0)
-        FROM manutencao
-        WHERE COALESCE(aprovado,0)=1 AND substr(data,4,2)=? AND substr(data,7,4)=?
-        """,
-        (mm, yyyy),
-    )
-    valor_total_os_aprov = float((cursor.fetchone() or [0])[0] or 0.0)
-
-    cursor.execute(
-        """
-        SELECT COUNT(1)
-        FROM manutencao
-        WHERE substr(data,4,2)=? AND substr(data,7,4)=?
-        """,
-        (mm, yyyy),
-    )
-    qtd_os = int((cursor.fetchone() or [0])[0] or 0)
-
-    cursor.execute(
-        """
-        SELECT COUNT(1)
-        FROM manutencao
-        WHERE COALESCE(aprovado,0)=1 AND substr(data,4,2)=? AND substr(data,7,4)=?
-        """,
-        (mm, yyyy),
-    )
-    qtd_os_aprov = int((cursor.fetchone() or [0])[0] or 0)
-
-    # Total geral do mês: vendas (tabela vendas) + manutenções aprovadas (tabela manutencao)
+    # Total geral do mês: vendas + manutenções aprovadas
     total_geral_mes = float(total_mes + valor_total_os_aprov)
 
+    # Ranking TOP N por valor
+    ranking = sorted(
+        [(p, st.get('qtd', 0), st.get('valor', 0.0)) for p, st in (prod_stats.items())],
+        key=lambda x: float(x[2] or 0.0),
+        reverse=True,
+    )[:top_n]
 
-    # Totais por forma de pagamento
-    cursor.execute(
-        """
-        SELECT pagamento, COALESCE(SUM(total),0)
-        FROM vendas
-        WHERE substr(data,4,2)=? AND substr(data,7,4)=?
-        GROUP BY pagamento
-        """,
-        (mm, yyyy),
-    )
-    pay_rows = cursor.fetchall() or []
-    totais_pg = {"PIX": 0.0, "Cartão": 0.0, "Dinheiro": 0.0, "OUTROS": 0.0}
-    for pg, tot in pay_rows:
-        k = str(pg or "").strip()
-        v = float(tot or 0.0)
-        if k.startswith("Upgrade"):
-            totais_pg["OUTROS"] += v
-        elif k in totais_pg:
-            totais_pg[k] += v
-        else:
-            totais_pg["OUTROS"] += v
-
-    # Ranking de produtos (TOP N) por valor
-    cursor.execute(
-        """
-        SELECT produto,
-               COALESCE(SUM(quantidade),0) as qtd_total,
-               COALESCE(SUM(total),0) as valor_total
-        FROM vendas
-        WHERE substr(data,4,2)=? AND substr(data,7,4)=?
-        GROUP BY produto
-        ORDER BY valor_total DESC
-        LIMIT ?
-        """,
-        (mm, yyyy, top_n),
-    )
-    ranking = cursor.fetchall() or []
-
-    # Gera gráfico (barras + linha)
+# Gera gráfico (barras + linha)
     chart_path = os.path.join(pasta_rel, f"_chart_vendas_{ano:04d}{mes:02d}.png")
     chart_ok = False
     try:
@@ -3181,6 +3176,34 @@ def _dash_fmt_brl(valor: float) -> str:
     s = f"{v:,.2f}"
     # converte 1,234.56 -> 1.234,56
     return "R$ " + s.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+# ===================== CAIXA: TOTAIS DO DIA (Bruto / Saídas / Líquido) =====================
+# Bruto: soma de vendas do dia (tabela vendas)
+# Saídas: soma absoluta das saídas do dia (tabela caixa, valor < 0)
+# Líquido: bruto - saídas
+
+def calcular_totais_dia(data_str: str = None):
+    """Retorna (vendas_dia, saidas_dia, liquido_dia) para a data informada (dd/mm/aaaa)."""
+    data_str = data_str or datetime.datetime.now().strftime("%d/%m/%Y")
+
+    try:
+        cursor.execute("SELECT COALESCE(SUM(total),0) FROM vendas WHERE data=?", (data_str,))
+        vendas_dia = float((cursor.fetchone() or [0])[0] or 0.0)
+    except Exception:
+        vendas_dia = 0.0
+
+    try:
+        cursor.execute("SELECT COALESCE(SUM(valor),0) FROM caixa WHERE data=? AND valor < 0", (data_str,))
+        saidas_neg = float((cursor.fetchone() or [0])[0] or 0.0)
+        saidas_dia = abs(saidas_neg)
+    except Exception:
+        saidas_dia = 0.0
+
+    liquido_dia = float(vendas_dia) - float(saidas_dia)
+    return float(vendas_dia), float(saidas_dia), float(liquido_dia)
+
+# ===================== FIM CAIXA: TOTAIS DO DIA =====================
 
 
 def _dash_datas_ultimos_dias(n: int = 7):
@@ -3913,9 +3936,12 @@ def abrir_sistema_com_logo(username, login_win):
 
     # Atualiza automaticamente a aba Vendas quando ela for selecionada
     def _on_tab_changed(event=None):
+
         try:
             if abas.select() == aba_vendas._w:
                 carregar_vendas_dia()
+            if abas.select() == aba_caixa._w:
+                atualizar_totais_ganho_dia_caixa()
         except Exception:
             pass
 
@@ -5407,6 +5433,37 @@ def abrir_sistema_com_logo(username, login_win):
     top_cx.pack(fill="x", pady=(0, 8))
     lbl_total_cx = ttk.Label(top_cx, text="", font=("Segoe UI", 12, "bold"))
     lbl_total_cx.pack(side="left", padx=6)
+
+
+    # --- Totais do dia (Bruto / Saídas / Líquido) ---
+    totais_dia_box = ttk.Frame(top_cx)
+    totais_dia_box.pack(side="left", padx=(16, 0))
+
+    lbl_vendas_dia_cx = ttk.Label(totais_dia_box, text="Vendas: R$ 0,00", font=("Segoe UI", 10, "bold"))
+    lbl_vendas_dia_cx.grid(row=0, column=0, sticky="w", padx=(0, 12))
+
+    lbl_saidas_dia_cx = ttk.Label(totais_dia_box, text="Saídas: R$ 0,00", font=("Segoe UI", 10, "bold"))
+    lbl_saidas_dia_cx.grid(row=0, column=1, sticky="w", padx=(0, 12))
+
+    lbl_liquido_dia_cx = ttk.Label(totais_dia_box, text="Líquido: R$ 0,00", font=("Segoe UI", 10, "bold"))
+    lbl_liquido_dia_cx.grid(row=0, column=2, sticky="w")
+
+    def atualizar_totais_ganho_dia_caixa():
+        """Atualiza os 3 totais no topo da aba Caixa."""
+        try:
+            vendas_dia, saidas_dia, liquido_dia = calcular_totais_dia()
+            fmt = _dash_fmt_brl if '_dash_fmt_brl' in globals() else (lambda v: f"R$ {float(v or 0):.2f}")
+            lbl_vendas_dia_cx.config(text=f"Vendas: {fmt(vendas_dia)}")
+            lbl_saidas_dia_cx.config(text=f"Saídas: {fmt(saidas_dia)}")
+            lbl_liquido_dia_cx.config(text=f"Líquido: {fmt(liquido_dia)}")
+        except Exception:
+            pass
+
+    # Atualiza ao abrir a aba (primeira renderização)
+    try:
+        atualizar_totais_ganho_dia_caixa()
+    except Exception:
+        pass
     lbl_data_hora = ttk.Label(top_cx, text="", font=("Segoe UI", 10))
     lbl_data_hora.pack(side="right", padx=6)
     caixa_ops = ttk.Frame(f_cx)
@@ -5605,64 +5662,57 @@ def abrir_sistema_com_logo(username, login_win):
     def atualizar_caixa():
         agora = datetime.datetime.now()
         hoje = agora.strftime("%d/%m/%Y")
+
+        # Atualiza os indicadores de ganho do dia (Vendas / Saídas / Líquido)
+        try:
+            atualizar_totais_ganho_dia_caixa()
+        except Exception:
+            pass
+        # (Patch) Evita NameError/UnboundLocal para variáveis de PDF usadas no fechamento
+        pdf_dia = None
+        pdf_mes = None
+        pdf_path = None
         cursor.execute("SELECT MAX(data) FROM caixa")
         ultima_data = cursor.fetchone()[0]
         if ultima_data and ultima_data != hoje:
+            # Fecha automaticamente o dia anterior (gera relatório antes de limpar a tabela 'caixa')
+            cursor.execute("SELECT COUNT(1) FROM caixa WHERE data=?", (ultima_data,))
+            qtd_lanc = int((cursor.fetchone() or [0])[0] or 0)
             cursor.execute("SELECT SUM(valor) FROM caixa WHERE data=?", (ultima_data,))
             total_ultimo = cursor.fetchone()[0] or 0
-            if total_ultimo != 0:
+            if qtd_lanc > 0:
+                # 1) Registra fechamento
                 with conn:
-                    cursor.execute(
-                        "INSERT OR REPLACE INTO fechamento_caixa (data,total) VALUES (?,?)",
-                        (ultima_data, total_ultimo),
-                    )
-                cursor.execute("DELETE FROM caixa WHERE data=?", (ultima_data,))
-                conn.commit()
-        cursor.execute("SELECT SUM(valor) FROM caixa WHERE data=?", (hoje,))
-        total_hoje = cursor.fetchone()[0] or 0
-        lbl_total_cx.config(
-            text=f"Total arrecadado hoje: R$ {total_hoje:.2f} \n Líquido: R$ {total_hoje:.2f}"
-        )
-        lbl_data_hora.config(text=f"Data e Hora: {agora.strftime('%d/%m/%Y %H:%M:%S')}")
-        if aba_caixa.winfo_exists():
-            aba_caixa.after(1000, atualizar_caixa)
-
-
-    def fechar_caixa():
-        hoje = datetime.datetime.now().strftime("%d/%m/%Y")
-        cursor.execute("SELECT SUM(valor) FROM caixa WHERE data=?", (hoje,))
-        total = cursor.fetchone()[0] or 0
-        if total == 0:
-            messagebox.showinfo("Fechar Caixa", "Nenhuma venda registrada hoje!")
-            return
-        if messagebox.askyesno(
-            "Fechar Caixa", f"Total do dia: R$ {total:.2f}\nDeseja fechar o caixa?"
-        ):
-            # 1) Registra o fechamento do dia (não apaga os lançamentos ainda)
-            with conn:
-                cursor.execute(
-                    "INSERT OR REPLACE INTO fechamento_caixa (data, total) VALUES (?, ?)",
-                    (hoje, total),
-                )
-            # 2) Gera o PDF com VENDAS e SAÍDAS (os dados ainda estão na tabela 'caixa')
-            pdf_path = gerar_relatorio_vendas_dia_pdf(data_str=hoje)
-
-            try:
-                telegram_notify(f"""🔒 <b>CAIXA FECHADO</b>
-            📅 Data: {hoje}
-            💰 Total do dia: R$ {total:.2f}
-            📄 Relatórios gerados ✅""", dedupe_key=f"fechamento_{hoje}", dedupe_window_sec=60)
-            except Exception:
-                pass
-            try:
-                telegram_send_pdf(f"📄 Relatório do dia {hoje}", pdf_path, dedupe_key=f"rel_dia_{hoje}", dedupe_window_sec=120)
-            except Exception:
-                pass
-            try:
-                if pdf_mes:
-                    telegram_send_pdf(f"📊 Relatório mensal {hoje[-7:]}", pdf_mes, dedupe_key=f"rel_mes_{hoje[-7:]}", dedupe_window_sec=600)
-            except Exception:
-                pass
+                    cursor.execute("INSERT OR REPLACE INTO fechamento_caixa (data,total) VALUES (?,?)", (ultima_data, total_ultimo))
+                # 2) Gera relatório diário (silencioso) antes de apagar lançamentos
+                pdf_dia = None
+                try:
+                    pdf_dia = gerar_relatorio_vendas_dia_pdf(data_str=ultima_data, abrir_pdf=False)
+                except Exception as ex:
+                    logging.error(f"Falha ao gerar relatório diário automático ({ultima_data}): {ex}", exc_info=True)
+                # 2.1) Se for último dia do mês fechado, gera relatório mensal (silencioso)
+                pdf_mes = None
+                try:
+                    dmY = _parse_br_date_flex(ultima_data)
+                    if dmY:
+                        d, mo, y = dmY
+                        if d == calendar.monthrange(y, mo)[1]:
+                            pdf_mes = gerar_relatorio_vendas_mes_pdf(y, mo, abrir_pdf=False)
+                except Exception as ex:
+                    logging.error(f"Falha ao gerar relatório mensal automático: {ex}", exc_info=True)
+                # 3) Telegram (mensagem + PDFs)
+                try:
+                    telegram_notify(f"""🔒 <b>CAIXA FECHADO (AUTO)</b>
+📅 Data: {ultima_data}
+💰 Total do dia: R$ {float(total_ultimo)}:.2f
+📄 Relatórios gerados ✅""", dedupe_key=f"auto_fech_{ultima_data}", dedupe_window_sec=120)
+                except Exception:
+                    pass
+                try:
+                    if pdf_dia:
+                        telegram_send_pdf(f"📄 Relatório do dia {ultima_data}", pdf_dia, dedupe_key=f"auto_rel_dia_{ultima_data}", dedupe_window_sec=600)
+                except Exception:
+                    pass
 
             # 2.1) Se for o ÚLTIMO DIA do mês, gera também o relatório MENSAL (gráfico + ranking)
             pdf_mes = None
@@ -5674,6 +5724,13 @@ def abrir_sistema_com_logo(username, login_win):
             except Exception as ex:
                 logging.error(f"Falha ao gerar relatório mensal: {ex}", exc_info=True)
 
+            # Envia o relatório mensal (se gerado)
+            try:
+                if pdf_mes:
+                    telegram_send_pdf(f"📊 Relatório mensal {hoje[-7:]}", pdf_mes, dedupe_key=f"rel_mes_{hoje[-7:]}", dedupe_window_sec=600)
+            except Exception:
+                pass
+
             # 3) Backups automáticos (banco, cupons, OS, relatórios)
             try:
                 backup_banco()
@@ -5684,13 +5741,77 @@ def abrir_sistema_com_logo(username, login_win):
                 pass
             # 4) Somente agora apagamos os lançamentos do dia do caixa
             with conn:
-                cursor.execute("DELETE FROM caixa WHERE data=?", (hoje,))
+                cursor.execute("DELETE FROM caixa WHERE data=?", (ultima_data,))
+            pdf_path = pdf_path or pdf_dia or pdf_mes or "(sem relatório)"
             messagebox.showinfo(
                 "Fechar Caixa",
-                f"Caixa do dia {hoje} fechado com sucesso!\nRelatório gerado:\n{pdf_path}",
+                f"Caixa do dia {ultima_data} fechado com sucesso!\nRelatório gerado:\n{pdf_path}",
             )
             carregar_historico_cx()
-            atualizar_caixa()
+            return
+
+    def fechar_caixa():
+        """Fecha o caixa do dia (manual) e gera relatório diário.
+        Retorna o caminho do PDF (ou None)."""
+        try:
+            agora = datetime.datetime.now()
+            hoje = agora.strftime("%d/%m/%Y")
+            cursor.execute("SELECT COUNT(1) FROM caixa WHERE data=?", (hoje,))
+            qtd = int((cursor.fetchone() or [0])[0] or 0)
+            cursor.execute("SELECT COALESCE(SUM(valor),0) FROM caixa WHERE data=?", (hoje,))
+            total_dia = float((cursor.fetchone() or [0])[0] or 0.0)
+            if qtd <= 0:
+                messagebox.showwarning("Fechar Caixa", f"Não há lançamentos para fechar no dia {hoje}.")
+                return None
+            if not messagebox.askyesno("Fechar Caixa", f"Deseja fechar o caixa do dia {hoje}?\n\nTotal do dia: R$ {total_dia:.2f}"):
+                return None
+            # 1) Registra fechamento
+            with conn:
+                cursor.execute("INSERT OR REPLACE INTO fechamento_caixa (data,total) VALUES (?,?)", (hoje, total_dia))
+            # 2) Gera relatório diário
+            pdf_path = None
+            try:
+                pdf_path = gerar_relatorio_vendas_dia_pdf(data_str=hoje, abrir_pdf=True)
+            except Exception as ex:
+                logging.error(f"Falha ao gerar relatório diário ({hoje}): {ex}", exc_info=True)
+            # 2.1) Se for último dia do mês, tenta gerar também o mensal (best-effort)
+            try:
+                dmY = _parse_br_date_flex(hoje)
+                if dmY:
+                    d, mo, y = dmY
+                    if d == calendar.monthrange(y, mo)[1]:
+                        _ = gerar_relatorio_vendas_mes_pdf(y, mo, abrir_pdf=True)
+            except Exception:
+                pass
+            # 3) Telegram / Backups (best-effort)
+            try:
+                telegram_notify(f"🔒 CAIXA FECHADO\nData: {hoje}\nTotal: R$ {total_dia:.2f}", dedupe_key=f"fech_{hoje}", dedupe_window_sec=120)
+            except Exception:
+                pass
+            try:
+                if pdf_path:
+                    telegram_send_pdf(f"📄 Relatório do dia {hoje}", pdf_path, dedupe_key=f"rel_dia_{hoje}", dedupe_window_sec=600)
+            except Exception:
+                pass
+            try:
+                backup_banco()
+                backup_bulk_dir(os.path.join(os.getcwd(), "cupons"), "cupons")
+                backup_bulk_dir(os.path.join(os.getcwd(), "OS"), "OS")
+                backup_bulk_dir(os.path.join(os.getcwd(), "relatorios"), "relatorios")
+            except Exception:
+                pass
+            # 4) Limpa lançamentos do dia
+            with conn:
+                cursor.execute("DELETE FROM caixa WHERE data=?", (hoje,))
+            messagebox.showinfo("Fechar Caixa", f"Caixa do dia {hoje} fechado com sucesso!\nRelatório gerado:\n{pdf_path or "(sem relatório)"}")
+            try:
+                carregar_historico_cx()
+            except Exception:
+                pass
+            return pdf_path
+        except Exception as ex:
+            messagebox.showerror("Erro", f"Falha ao fechar caixa.\n\nDetalhes: {ex}")
+            return None
 
     # --- Rodapé da aba Caixa: mensagem no canto inferior direito (vermelho e negrito) ---
     try:
