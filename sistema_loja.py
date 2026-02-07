@@ -499,7 +499,7 @@ def force_attach_statusbar(win):
 DISABLE_AUTO_UPDATE = (
     False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "4.8"
+APP_VERSION = "4.9"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
