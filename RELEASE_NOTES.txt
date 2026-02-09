@@ -1,3 +1,8 @@
+VERSÃO 5.0
+- Melhoria no Codigo
+- Bugs Corrigidos
+- Adicionado Novos Bugs
+
 VERSÃO 4.9
 - Novo sistema de novidades
 - Melhorias na tela de vendas
