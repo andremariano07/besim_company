@@ -64,6 +64,91 @@ import secrets
 import getpass
 from io import BytesIO
 
+# ===================== COMMON HELPERS (Refatoração incremental) =====================
+# Objetivo: reduzir repetição e deixar o código mais fluido sem quebrar a arquitetura.
+# - Paths seguros (script/EXE)
+# - Loader genérico de config KEY=VALUE
+# - Abrir arquivo no app padrão do SO (PDF)
+# - Decorator para callbacks Tkinter com log + mensagem
+
+from pathlib import Path as _Path
+
+def _app_base_dir() -> _Path:
+    """Diretório base do app (compatível com PyInstaller)."""
+    try:
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            return _Path(getattr(sys, '_MEIPASS'))
+    except Exception:
+        pass
+    return _Path(__file__).resolve().parent
+
+BASE_DIR = _app_base_dir()
+
+def P(*parts) -> _Path:
+    """Join de caminho relativo ao diretório base do app."""
+    return BASE_DIR.joinpath(*parts)
+
+
+def load_kv_config(path) -> dict:
+    """Lê arquivo no formato KEY=VALUE (ignorando vazias e comentários)."""
+    cfg = {}
+    try:
+        pth = str(path)
+        if os.path.isfile(pth):
+            with open(pth, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = (line or '').strip()
+                    if not line or line.startswith('#') or '=' not in line:
+                        continue
+                    k, v = line.split('=', 1)
+                    cfg[k.strip()] = v.strip()
+    except Exception as ex:
+        logging.error('Falha ao ler config %s: %s', path, ex, exc_info=True)
+    return cfg
+
+
+def open_in_default_app(file_path: str) -> bool:
+    """Abre um arquivo no aplicativo padrão do SO (Windows/macOS/Linux)."""
+    try:
+        fp = str(file_path)
+        system = platform.system()
+        if system == 'Windows':
+            os.startfile(fp)  # noqa
+        elif system == 'Darwin':
+            subprocess.run(['open', fp], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            subprocess.run(['xdg-open', fp], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except Exception as ex:
+        logging.error('Falha ao abrir arquivo: %s', ex, exc_info=True)
+        return False
+
+
+from functools import wraps as _wraps
+
+def ui_safe(title: str = 'Erro'):
+    """Decorator para handlers Tkinter: loga erro e mostra mensagem amigável."""
+    def deco(fn):
+        @_wraps(fn)
+        def wrapper(*args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except Exception as ex:
+                logging.error('Erro em %s: %s', getattr(fn, '__name__', 'callback'), ex, exc_info=True)
+                try:
+                    messagebox.showerror(title, f'Ocorreu um erro:\n{ex}')
+                except Exception:
+                    pass
+                return None
+        return wrapper
+    return deco
+
+# Controle: manter o comportamento de toast para showinfo (se quiser)
+USE_TOAST_FOR_INFO = True
+
+# ===================== FIM COMMON HELPERS =====================
+
+
 # ---- Gráficos para relatório mensal (matplotlib, modo headless) ----
 # O app continua funcionando mesmo sem matplotlib (gera PDF sem gráfico).
 try:
@@ -173,21 +258,8 @@ PADY = 8
 
 def _load_email_config():
     """Lê email_config.txt (chaves: EMAIL_GMAIL, EMAIL_GMAIL_APP)."""
-    cfg = {}
-    try:
-        path = os.path.join(os.getcwd(), "email_config.txt")
-        if os.path.isfile(path):
-            with open(path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith("#"):
-                        continue
-                    if "=" in line:
-                        k, v = line.split("=", 1)
-                        cfg[k.strip()] = v.strip()
-    except Exception as ex:
-        logging.error("Falha ao ler email_config.txt: " + str(ex))
-    return cfg
+    return load_kv_config(P('email_config.txt'))
+
 
 
 
@@ -499,7 +571,7 @@ def force_attach_statusbar(win):
 DISABLE_AUTO_UPDATE = (
     False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "4.9"
+APP_VERSION = "5.0"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -1084,6 +1156,7 @@ def adicionar_pontos_cliente(cpf: str, valor_em_reais: float) -> int:
     set_pontos_cliente(cpf, get_pontos_cliente(cpf) + pts_add)
     return pts_add
 
+@ui_safe('Pontuação')
 def registrar_resgate_pontos(cpf: str, item: str) -> tuple:
     """Registra resgate (Capa/Película) e debita pontos.
     Retorna (ok, msg, novo_saldo).
@@ -1504,7 +1577,7 @@ def enviar_chave_licenca_email(destinatario_email: str, chave: str, expira_iso: 
                 logo_path = cand
                 break
         if not logo_path:
-            cand = os.path.join(os.getcwd(), "logo.png")
+            cand = str(P('logo.png'))
             if os.path.isfile(cand):
                 logo_path = cand
 
@@ -2037,7 +2110,8 @@ def _showinfo_toast(title, message, *args, **kwargs):
         pass
     return 'ok'
 
-messagebox.showinfo = _showinfo_toast
+if USE_TOAST_FOR_INFO:
+    messagebox.showinfo = _showinfo_toast
 
 # ===================== TOOLTIP (Micro UX) =====================
 class ToolTip:
@@ -2155,7 +2229,7 @@ class SplashScreen(tk.Toplevel):
             pass
         frame = tk.Frame(self, bg="#1e1e1e")
         frame.pack(expand=True, fill="both")
-        logo_path = os.path.join(os.getcwd(), "logo.png")
+        logo_path = str(P('logo.png'))
         if os.path.exists(logo_path):
             try:
                 img = Image.open(logo_path).resize((240, 80))
@@ -2236,7 +2310,7 @@ def show_goodbye_screen(master, message="Até Logo,\nBom descanso", duration_ms=
         frame = tk.Frame(win, bg="#1e1e1e")
         frame.pack(expand=True, fill="both")
 
-        logo_path = os.path.join(os.getcwd(), "logo.png")
+        logo_path = str(P('logo.png'))
         if os.path.exists(logo_path):
             try:
                 img = Image.open(logo_path).resize((240, 80))
@@ -2273,6 +2347,276 @@ def show_goodbye_screen(master, message="Até Logo,\nBom descanso", duration_ms=
         return win
     except Exception:
         return None
+
+# ===================== RELEASE NOTES (Novidades / Melhorias) =====================
+# Mostra uma tela com a logo ao fundo e as melhorias da versão.
+# Fonte das melhorias: arquivo RELEASE_NOTES.txt (vem junto no update via GitHub).
+RELEASE_NOTES_FILE = "RELEASE_NOTES.txt"
+
+# Controle em memória para não reabrir várias vezes na mesma execução
+_RELEASE_NOTES_SESSION_SUPPRESS = set()  # versões suprimidas nesta sessão
+
+def _runtime_app_dir() -> _Path:
+    """Diretório real do app (pasta do .py ou do .exe)."""
+    try:
+        if getattr(sys, 'frozen', False):
+            return _Path(sys.executable).resolve().parent
+    except Exception:
+        pass
+    try:
+        return _Path(__file__).resolve().parent
+    except Exception:
+        return _Path(os.getcwd()).resolve()
+
+
+def _load_release_notes_text(max_chars: int = 14000) -> str:
+    """Carrega o texto de RELEASE_NOTES.txt, tentando caminhos comuns."""
+    candidates = []
+    try:
+        candidates.append(_runtime_app_dir() / RELEASE_NOTES_FILE)
+    except Exception:
+        pass
+    try:
+        candidates.append(_Path(os.getcwd()).resolve() / RELEASE_NOTES_FILE)
+    except Exception:
+        pass
+    # fallback: diretório base (PyInstaller _MEIPASS) — pode não conter o arquivo após update
+    try:
+        candidates.append(P(RELEASE_NOTES_FILE))
+    except Exception:
+        pass
+
+    for p in candidates:
+        try:
+            p = str(p)
+            if os.path.exists(p) and os.path.isfile(p):
+                with open(p, 'r', encoding='utf-8') as f:
+                    return (f.read() or '').strip()[:max_chars]
+        except Exception:
+            continue
+
+    return "Nenhuma melhoria registrada para esta versão."
+
+
+def _extract_notes_for_version(notes_text: str, version: str) -> str:
+    """Se o arquivo tiver várias versões, tenta extrair só o bloco da versão atual."""
+    try:
+        v = str(version or '').strip()
+        if not v:
+            return notes_text
+        # Aceita: "VERSÃO 4.8" / "VERSAO 4.8" / "VERSION 4.8"
+        pattern = re.compile(rf"^(VERS(Ã|A)O|VERSION)\s+{re.escape(v)}\s*$", re.IGNORECASE | re.MULTILINE)
+        m = pattern.search(notes_text or '')
+        if not m:
+            return notes_text
+        start = m.end()
+        # Próxima versão
+        m2 = re.search(r"^(VERS(Ã|A)O|VERSION)\s+\d+(\.\d+)*\s*$", (notes_text or '')[start:], re.IGNORECASE | re.MULTILINE)
+        end = start + (m2.start() if m2 else len((notes_text or '')[start:]))
+        block = (notes_text or '')[m.start():end].strip()
+        return block if block else notes_text
+    except Exception:
+        return notes_text
+
+
+class ReleaseNotesWindow(tk.Toplevel):
+    """Janela de novidades com logo ao fundo (marca d'água)."""
+
+    def __init__(self, master, version: str, notes_text: str, title_prefix: str = "Atualização"):
+        super().__init__(master)
+        self._choice = None  # 'continue' | 'later'
+        self.version = str(version or '').strip()
+
+        self.title(f"{title_prefix} • Novidades v{self.version}")
+        self.geometry("820x560")
+        self.minsize(720, 500)
+        self.configure(bg="#0f1115")
+
+        try:
+            self.transient(master)
+            self.grab_set()
+        except Exception:
+            pass
+
+        # Centraliza
+        try:
+            self.update_idletasks()
+            w, h = 820, 560
+            x = (self.winfo_screenwidth() // 2) - (w // 2)
+            y = (self.winfo_screenheight() // 2) - (h // 2)
+            self.geometry(f"{w}x{h}+{x}+{y}")
+        except Exception:
+            pass
+
+        # Canvas para fundo
+        self.canvas = tk.Canvas(self, bg="#0f1115", highlightthickness=0)
+        self.canvas.pack(fill="both", expand=True)
+
+        # Prepara logo marca d'água
+        self._bg_img = None
+        logo_path = str(P('logo.png'))
+        if os.path.exists(logo_path):
+            try:
+                img = Image.open(logo_path).convert("RGBA")
+                img = img.resize((560, 190))
+                # baixa opacidade
+                alpha = img.split()[-1]
+                alpha = alpha.point(lambda p: int(p * 0.10))  # 10% opacidade
+                img.putalpha(alpha)
+                self._bg_img = ImageTk.PhotoImage(img)
+            except Exception:
+                self._bg_img = None
+
+        # Frame do conteúdo
+        self.content = tk.Frame(self.canvas, bg="#0f1115")
+        self._content_id = self.canvas.create_window(0, 0, anchor="nw", window=self.content)
+
+        # Header
+        tk.Label(
+            self.content,
+            text=f"✨ Novidades / Melhorias — v{self.version}",
+            bg="#0f1115",
+            fg="#ffffff",
+            font=("Segoe UI", 16, "bold"),
+        ).pack(anchor="w", padx=18, pady=(18, 6))
+
+        tk.Label(
+            self.content,
+            text="Veja o que mudou nesta atualização.",
+            bg="#0f1115",
+            fg="#b4b4b4",
+            font=("Segoe UI", 10),
+        ).pack(anchor="w", padx=18, pady=(0, 12))
+
+        # Caixa de texto com scroll
+        box = tk.Frame(self.content, bg="#0f1115")
+        box.pack(fill="both", expand=True, padx=18, pady=(0, 14))
+
+        sb = tk.Scrollbar(box)
+        sb.pack(side="right", fill="y")
+
+        self.txt = tk.Text(
+            box,
+            wrap="word",
+            yscrollcommand=sb.set,
+            bg="#151824",
+            fg="#e8e8e8",
+            insertbackground="#e8e8e8",
+            relief="flat",
+            font=("Consolas", 11),
+            padx=12,
+            pady=10,
+        )
+        self.txt.pack(side="left", fill="both", expand=True)
+        sb.config(command=self.txt.yview)
+
+        self.txt.insert("1.0", notes_text or "")
+        self.txt.config(state="disabled")
+
+        # Botões
+        btns = tk.Frame(self.content, bg="#0f1115")
+        btns.pack(fill="x", padx=18, pady=(0, 18))
+
+        ttk.Button(btns, text="Ler depois", style="Secondary.TButton", command=self._later).pack(side="left")
+        ttk.Button(btns, text="Continuar", style="Success.TButton", command=self._continue).pack(side="right")
+
+        # Teclas
+        self.bind("<Return>", lambda e: self._continue())
+        self.bind("<Escape>", lambda e: self._later())
+
+        # Resize
+        self.bind("<Configure>", self._on_resize)
+        self.after(50, self._draw_background)
+
+    def _draw_background(self):
+        try:
+            self.canvas.delete("bg")
+            cw = max(1, self.canvas.winfo_width())
+            ch = max(1, self.canvas.winfo_height())
+
+            if self._bg_img:
+                self.canvas.create_image(cw // 2, ch // 2, image=self._bg_img, tags="bg")
+
+            self.canvas.coords(self._content_id, 0, 0)
+            self.canvas.itemconfig(self._content_id, width=cw, height=ch)
+        except Exception:
+            pass
+
+    def _on_resize(self, _evt=None):
+        self._draw_background()
+
+    def _continue(self):
+        self._choice = 'continue'
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        self.destroy()
+
+    def _later(self):
+        self._choice = 'later'
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        self.destroy()
+
+
+def show_release_notes(master, force: bool = False):
+    """Abre a tela de novidades. Se force=False, respeita controles de exibição automática."""
+    try:
+        version = get_local_version()
+        notes = _load_release_notes_text()
+        notes = _extract_notes_for_version(notes, version)
+
+        # Exibição automática: não mostrar se já mostrado ou adiado nesta versão
+        if not force:
+            if version in _RELEASE_NOTES_SESSION_SUPPRESS:
+                return
+            try:
+                last_shown = _meta_get('release_notes_last_shown', '')
+                deferred = _meta_get('release_notes_deferred', '')
+                if str(last_shown) == str(version) or str(deferred) == str(version):
+                    return
+            except Exception:
+                pass
+
+        win = ReleaseNotesWindow(master, version, notes)
+        try:
+            master.wait_window(win)
+        except Exception:
+            pass
+
+        choice = getattr(win, '_choice', None)
+        if choice == 'continue':
+            try:
+                _meta_set('release_notes_last_shown', str(version))
+            except Exception:
+                pass
+        elif choice == 'later':
+            # "Ler depois": não mostra automaticamente nesta versão, mas fica disponível no menu.
+            try:
+                _meta_set('release_notes_deferred', str(version))
+            except Exception:
+                pass
+            _RELEASE_NOTES_SESSION_SUPPRESS.add(str(version))
+
+    except Exception as ex:
+        try:
+            logging.error(f"Falha ao abrir novidades: {ex}", exc_info=True)
+        except Exception:
+            pass
+
+
+def maybe_show_release_notes(master):
+    """Mostra automaticamente as novidades após abrir o sistema (1x por versão, com opção 'ler depois')."""
+    try:
+        show_release_notes(master, force=False)
+    except Exception:
+        pass
+
+# ===================== FIM RELEASE NOTES =====================
+
 # ===================== UPDATE (após login, corrigido: sem loop) =====================
 
 # >>> Diálogo modal de alteração de senha e atalhos de tela cheia
@@ -2530,7 +2874,7 @@ def gerar_cupom(cliente, produto, qtd, pagamento, total, cpf=None):
         pasta_cupons, f"cupom_{agora.strftime('%Y%m%d_%H%M%S')}.pdf"
     )
     c = canvas.Canvas(nome_arquivo, pagesize=A4)
-    logo_path = os.path.join(os.getcwd(), "logo.png")
+    logo_path = str(P('logo.png'))
     if os.path.exists(logo_path):
         try:
             c.drawImage(
@@ -2572,13 +2916,7 @@ def gerar_cupom(cliente, produto, qtd, pagamento, total, cpf=None):
     except Exception:
         pass
     try:
-        sistema = platform.system()
-        if sistema == "Windows":
-            os.startfile(nome_arquivo)
-        elif sistema == "Darwin":
-            os.system(f"open '{nome_arquivo}'")
-        else:
-            os.system(f"xdg-open '{nome_arquivo}'")
+        open_in_default_app(nome_arquivo)
     except Exception:
         pass
     bring_app_to_front()
@@ -2590,7 +2928,7 @@ def gerar_os_pdf(os_num, nome, cpf, telefone, descricao, valor):
     os.makedirs(pasta_os, exist_ok=True)
     nome_arquivo = os.path.join(pasta_os, f"OS_{os_num}.pdf")
     c = canvas.Canvas(nome_arquivo, pagesize=A4)
-    logo_path = os.path.join(os.getcwd(), "logo.png")
+    logo_path = str(P('logo.png'))
     if os.path.exists(logo_path):
         try:
             c.drawImage(
@@ -2629,13 +2967,7 @@ def gerar_os_pdf(os_num, nome, cpf, telefone, descricao, valor):
     except Exception:
         pass
     try:
-        sistema = platform.system()
-        if sistema == "Windows":
-            os.startfile(nome_arquivo)
-        elif sistema == "Darwin":
-            os.system(f"open '{nome_arquivo}'")
-        else:
-            os.system(f"xdg-open '{nome_arquivo}'")
+        open_in_default_app(nome_arquivo)
     except Exception:
         pass
     bring_app_to_front()
@@ -2650,7 +2982,7 @@ def gerar_relatorio_vendas_dia_pdf(data_str: str = None, abrir_pdf: bool = True)
         pasta_rel, f"relatorio_vendas_{data_alvo.replace('/', '-')}" + ".pdf"
     )
     c = canvas.Canvas(nome_arquivo, pagesize=A4)
-    logo_path_local = os.path.join(os.getcwd(), "logo.png")
+    logo_path_local = str(P('logo.png'))
     if os.path.exists(logo_path_local):
         try:
             c.drawImage(
@@ -2824,13 +3156,7 @@ def gerar_relatorio_vendas_dia_pdf(data_str: str = None, abrir_pdf: bool = True)
     except Exception:
         pass
     try:
-        sistema = platform.system()
-        if sistema == "Windows":
-            os.startfile(nome_arquivo)
-        elif sistema == "Darwin":
-            os.system(f"open '{nome_arquivo}'")
-        else:
-            os.system(f"xdg-open '{nome_arquivo}'")
+        open_in_default_app(nome_arquivo)
     except Exception:
         pass
     bring_app_to_front()
@@ -2971,7 +3297,7 @@ def gerar_relatorio_vendas_mes_pdf(ano: int = None, mes: int = None, top_n: int 
 
     # Monta PDF
     c = canvas.Canvas(nome_arquivo, pagesize=A4)
-    logo_path_local = os.path.join(os.getcwd(), "logo.png")
+    logo_path_local = str(P('logo.png'))
     if os.path.exists(logo_path_local):
         try:
             c.drawImage(ImageReader(logo_path_local), 40, 770, width=140, height= 35,
@@ -3111,13 +3437,7 @@ def gerar_relatorio_vendas_mes_pdf(ano: int = None, mes: int = None, top_n: int 
         pass
 
     try:
-        sistema = platform.system()
-        if sistema == "Windows":
-            os.startfile(nome_arquivo)
-        elif sistema == "Darwin":
-            os.system(f"open '{nome_arquivo}'")
-        else:
-            os.system(f"xdg-open '{nome_arquivo}'")
+        open_in_default_app(nome_arquivo)
     except Exception:
         pass
 
@@ -3616,7 +3936,13 @@ def abrir_sistema_com_logo(username, login_win):
     try:
         updated = check_and_update_after_login(root)
         if updated:
-            return # app será reiniciado
+            return  # app será reiniciado
+    except Exception:
+        pass
+
+    # Mostra novidades da versão (1x por versão, com 'Ler depois')
+    try:
+        maybe_show_release_notes(root)
     except Exception:
         pass
 
@@ -3699,6 +4025,19 @@ def abrir_sistema_com_logo(username, login_win):
     menu_tema.add_radiobutton(label="Escuro (Modern Dark)", variable=tema_var, value="dark", command=_on_theme_change)
     menu_tema.add_radiobutton(label="Claro (Windows 11)", variable=tema_var, value="light", command=_on_theme_change)
     menu_sessao.add_cascade(label="Tema", menu=menu_tema)
+
+    # Atualizações / Melhorias (Release Notes)
+    def abrir_atualizacoes():
+        try:
+            show_release_notes(root, force=True)
+        except Exception as ex:
+            try:
+                messagebox.showerror('Atualização', f'Falha ao abrir atualizações:\n{ex}')
+            except Exception:
+                pass
+
+    menu_sessao.add_separator()
+    menu_sessao.add_command(label='Atualizações / Melhorias…', command=abrir_atualizacoes)
     def do_logout():
         if messagebox.askyesno(
             "Logout", "Deseja finalizar a sessão e voltar ao login?"
@@ -3748,6 +4087,15 @@ def abrir_sistema_com_logo(username, login_win):
     menu_sessao.add_separator()
     menu_sessao.add_command(label="Sair", accelerator="Ctrl+Q", command=do_quit)
     menu_bar.add_cascade(label="Sessão", menu=menu_sessao)
+
+    # Menu separado: Atualização
+    menu_atualizacao = tk.Menu(menu_bar, tearoff=0)
+    menu_atualizacao.add_command(label='Ver novidades / melhorias…', command=abrir_atualizacoes)
+    try:
+        menu_atualizacao.add_command(label='Abrir RELEASE_NOTES.txt', command=lambda: open_in_default_app(str(_runtime_app_dir() / RELEASE_NOTES_FILE)))
+    except Exception:
+        pass
+    menu_bar.add_cascade(label='Atualização', menu=menu_atualizacao)
     root.config(menu=menu_bar)
     root.bind_all("<Control-l>", lambda e: do_logout())
     root.bind_all("<Control-q>", lambda e: do_quit())
@@ -3850,7 +4198,7 @@ def abrir_sistema_com_logo(username, login_win):
     h_left = tk.Frame(header, bg=palette['panel'])
     h_left.pack(side='left', fill='x', expand=True)
 
-    logo_path = os.path.join(os.getcwd(), "logo.png")
+    logo_path = str(P('logo.png'))
     if os.path.exists(logo_path):
         try:
             img = Image.open(logo_path).resize((170, 52))
@@ -4086,7 +4434,7 @@ def abrir_sistema_com_logo(username, login_win):
         os.makedirs(pasta_rel, exist_ok=True)
         nome_arquivo = os.path.join(pasta_rel, f"relatorio_upgrades_{data_alvo.replace('/', '-')}.pdf")
         c = canvas.Canvas(nome_arquivo, pagesize=A4)
-        logo_path_local = os.path.join(os.getcwd(), "logo.png")
+        logo_path_local = str(P('logo.png'))
         if os.path.exists(logo_path_local):
             try:
                 c.drawImage(ImageReader(logo_path_local), 40, 780, width=140, height=40, preserveAspectRatio=True, mask="auto")
@@ -4143,19 +4491,14 @@ def abrir_sistema_com_logo(username, login_win):
         except Exception:
             pass
         try:
-            sistema = platform.system()
-            if sistema == "Windows":
-                os.startfile(nome_arquivo)
-            elif sistema == "Darwin":
-                os.system(f"open '{nome_arquivo}'")
-            else:
-                os.system(f"xdg-open '{nome_arquivo}'")
+            open_in_default_app(nome_arquivo)
         except Exception:
             pass
         bring_app_to_front()
         return nome_arquivo
     # Adiciona botão na aba Upgrade
     ttk.Button(top_hist_u, text="📄 Exportar PDF", style="Accent.TButton", command=lambda: gerar_relatorio_upgrades_dia_pdf()).pack(side="left", padx=6)
+    @ui_safe('Upgrade')
     def carregar_upgrades():
         tree_upgrades.delete(*tree_upgrades.get_children())
         hoje = datetime.datetime.now().strftime("%d/%m/%Y")
@@ -4597,6 +4940,7 @@ def abrir_sistema_com_logo(username, login_win):
     listar_estoque()
     btn_frame_est = ttk.Frame(aba_estoque)
     btn_frame_est.pack(fill="x", pady=(6, 0))
+    @ui_safe('Estoque')
     def cadastrar_produto():
         try:
             codigo = ent_codigo.get().strip()
@@ -4619,6 +4963,7 @@ def abrir_sistema_com_logo(username, login_win):
             messagebox.showerror("Erro", "Código já existe!")
         except ValueError:
             messagebox.showerror("Erro", "Digite números válidos")
+    @ui_safe('Estoque')
     def excluir_produto():
         if not is_admin(username):
             messagebox.showerror(
@@ -4661,6 +5006,7 @@ def abrir_sistema_com_logo(username, login_win):
             except Exception:
                 ent_custo.insert(0, str(r[0]))
         return vals[0]
+    @ui_safe('Estoque')
     def salvar_edicao_produto():
         codigo = ent_codigo.get().strip()
         if not codigo:
@@ -4747,6 +5093,7 @@ def abrir_sistema_com_logo(username, login_win):
     e_cpf.bind("<KeyRelease>", lambda e: formatar_cpf(e, e_cpf))
     e_tel.bind("<KeyRelease>", lambda e: formatar_telefone(e, e_tel))
     # -- FUNÇÕES --
+    @ui_safe('Clientes')
     def carregar_clientes():
         tree_cli.delete(*tree_cli.get_children())
         for cpf, nome, tel in cursor.execute(
@@ -4886,6 +5233,7 @@ def abrir_sistema_com_logo(username, login_win):
             return ""
 
 
+    @ui_safe('Pontuação')
     def carregar_pontuacao(query: str = ""):
         # Limpa a Treeview (robusto)
         for _iid in tree_pontos.get_children():
@@ -5079,6 +5427,7 @@ def abrir_sistema_com_logo(username, login_win):
     ent_cod_v.bind("<FocusOut>", buscar_produto_v)
     ent_qtd_v.bind("<KeyRelease>", atualizar_total)
     ent_qtd_v.bind("<FocusOut>", atualizar_total)
+    @ui_safe('Vendas')
     def finalizar_venda():
         try:
             cpf = ent_cpf_v.get().strip()
@@ -5282,6 +5631,7 @@ def abrir_sistema_com_logo(username, login_win):
     tree_vendas.tag_configure("Dinheiro", background="#fff5e6", foreground="black")
     tree_vendas.tag_configure("default", background="white", foreground="black")
 
+    @ui_safe('Vendas')
     def excluir_venda():
         """Exclui a venda selecionada na lista do dia e estorna o valor no caixa."""
         sel = tree_vendas.selection()
@@ -5382,6 +5732,7 @@ def abrir_sistema_com_logo(username, login_win):
             logging.error("Falha ao excluir venda", exc_info=True)
             messagebox.showerror("Erro", f"Falha ao excluir venda\n{ex}")
 
+    @ui_safe('Vendas')
     def carregar_vendas_dia():
         tree_vendas.delete(*tree_vendas.get_children())
         hoje = datetime.datetime.now().strftime("%d/%m/%Y")
@@ -5448,6 +5799,7 @@ def abrir_sistema_com_logo(username, login_win):
     lbl_liquido_dia_cx = ttk.Label(totais_dia_box, text="Líquido: R$ 0,00", font=("Segoe UI", 10, "bold"))
     lbl_liquido_dia_cx.grid(row=0, column=2, sticky="w")
 
+    @ui_safe('Caixa')
     def atualizar_totais_ganho_dia_caixa():
         """Atualiza os 3 totais no topo da aba Caixa."""
         try:
@@ -5505,6 +5857,7 @@ def abrir_sistema_com_logo(username, login_win):
             return "🛠️"
 
         return "💸"
+    @ui_safe('Caixa')
     def registrar_saida_caixa():
         valor_text = ent_saida_cx.get().replace("R$", "").replace(",", ".").strip()
         motivo = ent_motivo_cx.get().strip()
@@ -5571,6 +5924,7 @@ def abrir_sistema_com_logo(username, login_win):
             y -= 1
         return y, m
 
+    @ui_safe('Caixa')
     def ver_relatorio_mensal_ultimo_mes(send_telegram: bool = True):
         """Gera e abre o relatório mensal do último mês e envia o PDF pelo Telegram (chat já configurado)."""
         try:
@@ -5646,6 +6000,7 @@ def abrir_sistema_com_logo(username, login_win):
     )
     tree_cx.configure(yscroll=scrollbar_cx.set)
     scrollbar_cx.pack(side="right", fill="y")
+    @ui_safe('Caixa')
     def carregar_historico_cx():
         try:
             if not tree_cx.winfo_exists():
@@ -5750,6 +6105,7 @@ def abrir_sistema_com_logo(username, login_win):
             carregar_historico_cx()
             return
 
+    @ui_safe('Caixa')
     def fechar_caixa():
         """Fecha o caixa do dia (manual) e gera relatório diário.
         Retorna o caminho do PDF (ou None)."""
@@ -5879,6 +6235,7 @@ def abrir_sistema_com_logo(username, login_win):
     scrollbar_m = ttk.Scrollbar(tree_m_frame, orient="vertical", command=tree_m.yview)
     tree_m.configure(yscroll=scrollbar_m.set)
     scrollbar_m.pack(side="right", fill="y")
+    @ui_safe('Manutenção')
     def carregar_manutencao():
         tree_m.delete(*tree_m.get_children())
         for row in cursor.execute(
@@ -5915,6 +6272,7 @@ def abrir_sistema_com_logo(username, login_win):
     ttk.Button(f_m, text="Buscar Cliente", command=buscar_cliente_m).grid(
         row=0, column=6, padx=6
     )
+    @ui_safe('Manutenção')
     def cadastrar_manutencao():
         cpf = ent_cpf_m.get().strip()
         nome = ent_nome_m.get().strip()
@@ -5967,6 +6325,7 @@ def abrir_sistema_com_logo(username, login_win):
         f_m, text="Registrar Manutenção", command=cadastrar_manutencao
     )
     btn_reg_manut.grid(row=2, column=0, columnspan=2, pady=8)
+    @ui_safe('Manutenção')
     def excluir_manutencao():
         if not is_admin(username):
             messagebox.showerror(
@@ -5989,6 +6348,7 @@ def abrir_sistema_com_logo(username, login_win):
     btn_excluir_manut.grid(row=2, column=2, columnspan=2, pady=8)
     if not is_admin(username):
         btn_excluir_manut.state(["disabled"])
+    @ui_safe('Manutenção')
     def aprovar_manutencao():
         selected = tree_m.selection()
         if not selected:
@@ -6099,6 +6459,7 @@ def abrir_sistema_com_logo(username, login_win):
     )
     tree_dev.configure(yscroll=scrollbar_dev.set)
     scrollbar_dev.pack(side="right", fill="y")
+    @ui_safe('Devolução')
     def carregar_devolucoes():
         tree_dev.delete(*tree_dev.get_children())
         cursor.execute(
@@ -6115,6 +6476,7 @@ def abrir_sistema_com_logo(username, login_win):
         for data, hora, nome, item, motivo in cursor.fetchall():
             tree_dev.insert("", "end", values=(data, hora, nome, item, motivo))
         apply_zebra(tree_dev)
+    @ui_safe('Devolução')
     def registrar_devolucao():
         nome = ent_nome_dev.get().strip()
         item = ent_devolucao.get().strip()
@@ -6295,7 +6657,7 @@ def abrir_login():
                         fill=pal["panel2"], outline="", width=0)
 
     # Logo + glow atrás (garantido atrás do logo)
-    logo_path = os.path.join(os.getcwd(), "logo.png")
+    logo_path = str(P('logo.png'))
     cx, cy = (card_x1 + card_x2)//2, card_y1 + 30
 
     # Glow (desenhado antes do logo)
