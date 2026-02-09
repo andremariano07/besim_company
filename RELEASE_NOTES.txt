@@ -1,3 +1,11 @@
+VERSÃO 5.4
+- Adicionado Aba Devedores
+- Corrigido Algumas Coisas
+- Recriado toda a aba caixa
+- Recriado todo o relatorio de fechamento de caixa
+- Reestilizado toda a logo do sistema
+-Reestruturado todo o layout do PDF
+
 VERSÃO 5.3
 - Adicionado Aba Devedores
 - Corrigido Algumas Coisas
