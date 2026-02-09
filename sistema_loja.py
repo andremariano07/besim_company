@@ -3002,6 +3002,25 @@ def check_and_update_after_login(master: tk.Misc) -> bool:
             pass
         return False
 # ================= FUNÇÕES PDF =================
+
+def _pdf_draw_logo(c, x=40, y=740, w=260, h=90):
+    """Desenha a logo (logo.png) em PDFs com tamanho maior e consistente (260x90)."""
+    try:
+        logo_path = str(P('logo.png'))
+        if os.path.exists(logo_path):
+            c.drawImage(
+                ImageReader(logo_path),
+                x,
+                y,
+                width=w,
+                height=h,
+                preserveAspectRatio=True,
+                mask="auto",
+            )
+    except Exception:
+        pass
+
+
 def gerar_cupom(cliente, produto, qtd, pagamento, total, cpf=None):
     agora = datetime.datetime.now()
     pasta_cupons = os.path.join(os.getcwd(), "cupons")
@@ -3011,20 +3030,8 @@ def gerar_cupom(cliente, produto, qtd, pagamento, total, cpf=None):
     )
     c = canvas.Canvas(nome_arquivo, pagesize=A4)
     logo_path = str(P('logo.png'))
-    if os.path.exists(logo_path):
-        try:
-            c.drawImage(
-                ImageReader(logo_path),
-                40,
-                730,
-                width=150,
-                height=50,
-                preserveAspectRatio=True,
-                mask="auto",
-            )
-        except Exception:
-            pass
-    t = c.beginText(40, 680)
+    _pdf_draw_logo(c, x=40, y=730, w=260, h=90)
+    t = c.beginText(40, 650)
     t.setFont("Helvetica", 12)
     linhas = [
         "BESIM COMPANY",
@@ -3065,20 +3072,8 @@ def gerar_os_pdf(os_num, nome, cpf, telefone, descricao, valor):
     nome_arquivo = os.path.join(pasta_os, f"OS_{os_num}.pdf")
     c = canvas.Canvas(nome_arquivo, pagesize=A4)
     logo_path = str(P('logo.png'))
-    if os.path.exists(logo_path):
-        try:
-            c.drawImage(
-                ImageReader(logo_path),
-                40,
-                730,
-                width=150,
-                height=50,
-                preserveAspectRatio=True,
-                mask="auto",
-            )
-        except Exception:
-            pass
-    t = c.beginText(40, 680)
+    _pdf_draw_logo(c, x=40, y=730, w=260, h=90)
+    t = c.beginText(40, 650)
     t.setFont("Helvetica", 12)
     linhas = [
         "BESIM COMPANY - ORDEM DE SERVIÇO",
@@ -3119,24 +3114,12 @@ def gerar_relatorio_vendas_dia_pdf(data_str: str = None, abrir_pdf: bool = True)
     )
     c = canvas.Canvas(nome_arquivo, pagesize=A4)
     logo_path_local = str(P('logo.png'))
-    if os.path.exists(logo_path_local):
-        try:
-            c.drawImage(
-                ImageReader(logo_path_local),
-                40,
-                780,
-                width=140,
-                height=40,
-                preserveAspectRatio=True,
-                mask="auto",
-            )
-        except Exception:
-            pass
+    _pdf_draw_logo(c, x=40, y=740, w=260, h=90)
     c.setFont("Helvetica-Bold", 12)
-    c.drawString(40, 760, f"Relatório de Vendas - {data_alvo}")
+    c.drawString(40, 720, f"Relatório de Vendas - {data_alvo}")
     c.setFont("Helvetica", 11)
-    c.drawString(40, 742, "-" * 110)
-    y = 720
+    c.drawString(40, 702, "-" * 110)
+    y = 680
     # Vendas do dia
     cursor.execute(
         "SELECT hora, cliente, produto, quantidade, pagamento, total FROM vendas WHERE data=? ORDER BY hora DESC",
@@ -3174,24 +3157,12 @@ def gerar_relatorio_vendas_dia_pdf(data_str: str = None, abrir_pdf: bool = True)
             y -= 16
             if y < 60:
                 c.showPage()
-                if os.path.exists(logo_path_local):
-                    try:
-                        c.drawImage(
-                            ImageReader(logo_path_local),
-                            40,
-                            780,
-                            width=140,
-                            height=40,
-                            preserveAspectRatio=True,
-                            mask="auto",
-                        )
-                    except Exception:
-                        pass
+                _pdf_draw_logo(c, x=40, y=740, w=260, h=90)
                 c.setFont("Helvetica-Bold", 12)
-                c.drawString(40, 760, f"Relatório de Vendas - {data_alvo}")
+                c.drawString(40, 720, f"Relatório de Vendas - {data_alvo}")
                 c.setFont("Helvetica", 11)
-                c.drawString(40, 742, "-" * 110)
-                y = 720
+                c.drawString(40, 702, "-" * 110)
+                y = 680
                 c.setFont("Helvetica-Bold", 10)
                 c.drawString(40, y, "Hora")
                 c.drawString(90, y, "Cliente")
@@ -3304,16 +3275,12 @@ def gerar_relatorio_vendas_dia_pdf(data_str: str = None, abrir_pdf: bool = True)
 
         if y < 120:
             c.showPage()
-            if os.path.exists(logo_path_local):
-                try:
-                    c.drawImage(ImageReader(logo_path_local), 40, 780, width=140, height=40, preserveAspectRatio=True, mask="auto")
-                except Exception:
-                    pass
+            _pdf_draw_logo(c, x=40, y=740, w=260, h=90)
             c.setFont("Helvetica-Bold", 12)
             c.drawString(40, 760, f"Relatório de Vendas - {data_alvo} (continuação)")
             c.setFont("Helvetica", 11)
-            c.drawString(40, 742, "-" * 110)
-            y = 720
+            c.drawString(40, 702, "-" * 110)
+            y = 680
     except Exception:
         pass
 
@@ -3344,24 +3311,12 @@ def gerar_relatorio_vendas_dia_pdf(data_str: str = None, abrir_pdf: bool = True)
         for hora_s, motivo_s, valor_s in saidas:
             if y < 60:
                 c.showPage()
-                if os.path.exists(logo_path_local):
-                    try:
-                        c.drawImage(
-                            ImageReader(logo_path_local),
-                            40,
-                            780,
-                            width=140,
-                            height=40,
-                            preserveAspectRatio=True,
-                            mask="auto",
-                        )
-                    except Exception:
-                        pass
+                _pdf_draw_logo(c, x=40, y=740, w=260, h=90)
                 c.setFont("Helvetica-Bold", 12)
-                c.drawString(40, 760, f"Relatório de Vendas - {data_alvo}")
+                c.drawString(40, 720, f"Relatório de Vendas - {data_alvo}")
                 c.setFont("Helvetica", 11)
-                c.drawString(40, 742, "-" * 110)
-                y = 720
+                c.drawString(40, 702, "-" * 110)
+                y = 680
                 c.setFont("Helvetica-Bold", 12)
                 c.drawString(40, y, "Saídas do dia (continuação)")
                 y -= 18
@@ -3536,19 +3491,13 @@ def gerar_relatorio_vendas_mes_pdf(ano: int = None, mes: int = None, top_n: int 
     # Monta PDF
     c = canvas.Canvas(nome_arquivo, pagesize=A4)
     logo_path_local = str(P('logo.png'))
-    if os.path.exists(logo_path_local):
-        try:
-            c.drawImage(ImageReader(logo_path_local), 40, 770, width=140, height= 35,
-                        preserveAspectRatio=True, mask="auto")
-        except Exception:
-            pass
-
+    _pdf_draw_logo(c, x=40, y=740, w=260, h=90)
     c.setFont("Helvetica-Bold", 13)
-    c.drawString(40, 745, f"Relatório Mensal de Vendas — {mes:02d}/{ano:04d}")
+    c.drawString(40, 720, f"Relatório Mensal de Vendas — {mes:02d}/{ano:04d}")
     c.setFont("Helvetica", 11)
-    c.drawString(40, 728, "-" * 110)
+    c.drawString(40, 702, "-" * 110)
     # Resumo
-    y = 705
+    y = 680
     c.setFont("Helvetica-Bold", 12)
     c.drawString(40, y, f"Total do mês (vendas): R$ {total_mes:.2f}")
     y -= 16
@@ -3607,16 +3556,11 @@ def gerar_relatorio_vendas_mes_pdf(ano: int = None, mes: int = None, top_n: int 
             y -= 14
             if y < 110:
                 c.showPage()
-                if os.path.exists(logo_path_local):
-                    try:
-                        c.drawImage(ImageReader(logo_path_local), 40, 770, width=140, height= 35,
-                                    preserveAspectRatio=True, mask="auto")
-                    except Exception:
-                        pass
+                _pdf_draw_logo(c, x=40, y=740, w=260, h=90)
                 c.setFont("Helvetica-Bold", 13)
-                c.drawString(40, 745, f"Relatório Mensal de Vendas — {mes:02d}/{ano:04d} (continuação)")
+                c.drawString(40, 720, f"Relatório Mensal de Vendas — {mes:02d}/{ano:04d} (continuação)")
                 c.setFont("Helvetica", 11)
-                c.drawString(40, 728, "-" * 110)
+                c.drawString(40, 702, "-" * 110)
                 c.setFont("Helvetica-Bold", 11)
                 c.drawString(40, 730, f"Ranking TOP {top_n} de produtos (por valor vendido)")
                 c.setFont("Helvetica", 10)
@@ -3630,16 +3574,11 @@ def gerar_relatorio_vendas_mes_pdf(ano: int = None, mes: int = None, top_n: int 
     # Totais por dia (tabela)
     if y < 140:
         c.showPage()
-        if os.path.exists(logo_path_local):
-            try:
-                c.drawImage(ImageReader(logo_path_local), 40, 770, width=140, height= 35,
-                            preserveAspectRatio=True, mask="auto")
-            except Exception:
-                pass
+        _pdf_draw_logo(c, x=40, y=740, w=260, h=90)
         c.setFont("Helvetica-Bold", 13)
-        c.drawString(40, 745, f"Relatório Mensal de Vendas — {mes:02d}/{ano:04d} (totais por dia)")
+        c.drawString(40, 720, f"Relatório Mensal de Vendas — {mes:02d}/{ano:04d} (totais por dia)")
         c.setFont("Helvetica", 11)
-        c.drawString(40, 728, "-" * 110)
+        c.drawString(40, 702, "-" * 110)
         y = 730
 
     c.setFont("Helvetica-Bold", 11)
@@ -4681,7 +4620,7 @@ def abrir_sistema_com_logo(username, login_win):
             except Exception:
                 pass
         c.setFont("Helvetica-Bold", 12)
-        c.drawString(40, 760, f"Relatório de Upgrades - {data_alvo}")
+        c.drawString(40, 720, f"Relatório de Upgrades - {data_alvo}")
         c.setFont("Helvetica", 11)
         c.drawString(40, 742, "-" * 110)
         y = 720
