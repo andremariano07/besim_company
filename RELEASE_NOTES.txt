@@ -1,1 +1,8 @@
+VERSÃO 4.9
+- Novo sistema de novidades
+- Melhorias na tela de vendas
+- Correção do relatório mensal
 
+VERSÃO 4.8
+- Splash Screen com barra de progresso real
+- Janela volta ao foco após abrir PDF
