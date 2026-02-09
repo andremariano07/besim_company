@@ -571,7 +571,7 @@ def force_attach_statusbar(win):
 DISABLE_AUTO_UPDATE = (
     False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "5.0"
+APP_VERSION = "5.1"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -779,7 +779,7 @@ def _meta_set(key: str, value: str):
 
 
 def notify_agendamentos_hoje_once():
-    """Se houver agendamento para HOJE, envia Telegram 1x por dia (ao abrir o sistema)."""
+    """Se houver agendamento para HOJE, envia Telegram uma vez por dia (ao abrir o sistema)."""
     try:
         hoje = datetime.date.today()
         iso = hoje.strftime("%Y-%m-%d")
@@ -797,13 +797,14 @@ def notify_agendamentos_hoje_once():
         qtd = len(nomes)
         br = hoje.strftime("%d/%m/%Y")
         lista = "\n".join(nomes)
-
+        msg = (
+            "📅 <b>RETIRADAS HOJE</b>\n"
+            f"🗓 Data: {br}\n"
+            f"👥 Responsáveis: {qtd}\n\n"
+            f"{lista}"
+        )
         telegram_notify(
-            f"""📅 <b>AGENDAMENTO DE HOJE</b>
-🗓 Data: {br}
-👥 Pessoas: {qtd}
-📝 Lista:
-{lista}""",
+            msg,
             dedupe_key=f"ag_hoje_{iso}",
             dedupe_window_sec=120,
         )
@@ -820,6 +821,79 @@ def start_agendamento_notify_on_open(root_widget):
     except Exception:
         notify_agendamentos_hoje_once()
 
+
+
+# ===================== AGENDAMENTO: DEVEDORES (cobrança no dia) =====================
+def notify_devedores_hoje_once():
+    """Se houver devedores com vencimento HOJE, envia Telegram uma vez por dia (ao abrir / em background)."""
+    try:
+        hoje = datetime.date.today()
+        iso = hoje.strftime("%Y-%m-%d")
+        meta_key = f"dev_today_notified_{iso}"
+        if _meta_get(meta_key, "0") == "1":
+            return
+
+        cursor.execute(
+            """SELECT nome, cpf, COALESCE(valor,0) AS valor
+               FROM devedores
+               WHERE data_iso=? AND COALESCE(pago,0)=0
+               ORDER BY nome""",
+            (iso,),
+        )
+        rows = cursor.fetchall() or []
+        if not rows:
+            return
+
+        br = hoje.strftime("%d/%m/%Y")
+        total = sum(float(r[2] or 0.0) for r in rows)
+        linhas = []
+        for nome, cpf, valor in rows:
+            nome = (nome or "(sem nome)").strip()
+            cpf = (cpf or "").strip()
+            try:
+                v = float(valor or 0.0)
+            except Exception:
+                v = 0.0
+            linhas.append(f"• {nome} ({cpf}) — R$ {v:.2f}")
+
+        msg = (
+            f"💰 <b>COBRAR HOJE</b>\n"
+            f"🗓 Data: {br}\n"
+            f"👥 Devedores: {len(rows)}\n"
+            f"💵 Total: R$ {total:.2f}\n\n"
+            + "\n".join(linhas)
+        )
+        telegram_notify(
+            msg,
+            dedupe_key=f"dev_hoje_{iso}",
+            dedupe_window_sec=120,
+        )
+        _meta_set(meta_key, "1")
+    except Exception:
+        pass
+
+
+def start_devedores_notify_on_open(root_widget):
+    """Agenda a checagem de devedores (HOJE) alguns segundos após abrir e depois periodicamente."""
+    def _tick():
+        try:
+            notify_devedores_hoje_once()
+        finally:
+            try:
+                # Revalida a cada 60 minutos para cobrir virada do dia com o app aberto
+                root_widget.after(60 * 60 * 1000, _tick)
+            except Exception:
+                pass
+
+    try:
+        root_widget.after(3200, _tick)
+    except Exception:
+        try:
+            _tick()
+        except Exception:
+            pass
+
+# ===================== FIM AGENDAMENTO: DEVEDORES =====================
 # ===================== FIM AGENDAMENTO: NOTIFICAÇÃO =====================
 
 
@@ -877,17 +951,25 @@ CREATE TABLE IF NOT EXISTS caixa (
 )
 """
 )
-cursor.execute(
-    """
-CREATE TABLE IF NOT EXISTS clientes (
-    cpf TEXT PRIMARY KEY,
+# >>>>>> NOVO: Tabela Devedores (cobranças)
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS devedores (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cpf TEXT,
     nome TEXT,
-    telefone TEXT
+    data_pagamento TEXT,
+    data_iso TEXT,
+    valor REAL,
+    pago INTEGER DEFAULT 0,
+    criado_em TEXT,
+    pago_em TEXT
 )
-"""
-)
-cursor.execute(
-    """
+""")
+cursor.execute("CREATE INDEX IF NOT EXISTS idx_devedores_data_iso ON devedores(data_iso)")
+conn.commit()
+# <<<<<< FIM NOVO: Devedores
+
+cursor.execute("""
 CREATE TABLE IF NOT EXISTS devolucoes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     item TEXT,
@@ -896,9 +978,10 @@ CREATE TABLE IF NOT EXISTS devolucoes (
     data TEXT,
     hora TEXT
 )
-"""
-)
+""")
 conn.commit()
+# <<<<<< FIM NOVO: Devedores
+
 cursor.execute(
     """
 CREATE TABLE IF NOT EXISTS fechamento_caixa (
@@ -1185,7 +1268,7 @@ def registrar_resgate_pontos(cpf: str, item: str) -> tuple:
     return True, f"Resgate registrado: {item} (-{custo} pts).", novo
 
 def run_pontos_migration_once():
-    """Migra pontos iniciais a partir do histórico de vendas (1x)."""
+    """Migra pontos iniciais a partir do histórico de vendas (uma vez)."""
     try:
         cursor.execute("SELECT value FROM app_meta WHERE key=?", ('pontos_migracao_v1',))
         r = cursor.fetchone()
@@ -2404,21 +2487,19 @@ def _extract_notes_for_version(notes_text: str, version: str) -> str:
         v = str(version or '').strip()
         if not v:
             return notes_text
-        # Aceita: "VERSÃO 4.8" / "VERSAO 4.8" / "VERSION 4.8"
-        pattern = re.compile(rf"^(VERS(Ã|A)O|VERSION)\s+{re.escape(v)}\s*$", re.IGNORECASE | re.MULTILINE)
-        m = pattern.search(notes_text or '')
+        # Cabeçalhos aceitos: "VERSÃO 4.8" / "VERSAO 4.8" / "VERSION 4.8"
+        header_re = re.compile(r'^(VERS[AÃ]O|VERSION)\s+' + re.escape(v) + r'\s*$', re.IGNORECASE | re.MULTILINE)
+        m = header_re.search(notes_text or '')
         if not m:
             return notes_text
         start = m.end()
-        # Próxima versão
-        m2 = re.search(r"^(VERS(Ã|A)O|VERSION)\s+\d+(\.\d+)*\s*$", (notes_text or '')[start:], re.IGNORECASE | re.MULTILINE)
+        next_re = re.compile(r'^(VERS[AÃ]O|VERSION)\s+\d+(?:\.\d+)*\s*$', re.IGNORECASE | re.MULTILINE)
+        m2 = next_re.search((notes_text or '')[start:])
         end = start + (m2.start() if m2 else len((notes_text or '')[start:]))
         block = (notes_text or '')[m.start():end].strip()
         return block if block else notes_text
     except Exception:
         return notes_text
-
-
 class ReleaseNotesWindow(tk.Toplevel):
     """Janela de novidades com logo ao fundo (marca d'água)."""
 
@@ -2609,7 +2690,7 @@ def show_release_notes(master, force: bool = False):
 
 
 def maybe_show_release_notes(master):
-    """Mostra automaticamente as novidades após abrir o sistema (1x por versão, com opção 'ler depois')."""
+    """Mostra automaticamente as novidades após abrir o sistema (uma vez por versão, com opção 'ler depois')."""
     try:
         show_release_notes(master, force=False)
     except Exception:
@@ -3940,7 +4021,7 @@ def abrir_sistema_com_logo(username, login_win):
     except Exception:
         pass
 
-    # Mostra novidades da versão (1x por versão, com 'Ler depois')
+    # Mostra novidades da versão (uma vez por versão, com 'Ler depois')
     try:
         maybe_show_release_notes(root)
     except Exception:
@@ -4269,12 +4350,14 @@ def abrir_sistema_com_logo(username, login_win):
     aba_estoque = ttk.Frame(abas, padding=10)
     aba_vendas = ttk.Frame(abas, padding=10)
     aba_clientes = ttk.Frame(abas, padding=10)
+    aba_devedores = ttk.Frame(abas, padding=10)
     aba_caixa = ttk.Frame(abas, padding=10)
     aba_manutencao = ttk.Frame(abas, padding=10)
     aba_devolucao = ttk.Frame(abas, padding=10)
     abas.add(aba_estoque, text="Estoque")
     abas.add(aba_vendas, text="Vendas")
     abas.add(aba_clientes, text="Clientes")
+    abas.add(aba_devedores, text="Devedores")
     abas.add(aba_caixa, text="Caixa")
     abas.add(aba_manutencao, text="Manutenção")
     abas.add(aba_devolucao, text="Devolução")
@@ -4806,6 +4889,7 @@ def abrir_sistema_com_logo(username, login_win):
 
     # Notifica no Telegram se houver agendamento para HOJE (ao abrir)
     start_agendamento_notify_on_open(root)
+    start_devedores_notify_on_open(root)
 # ====== ESTOQUE ======
     est_top = ttk.Frame(aba_estoque)
     est_top.pack(fill="both", expand=True)
@@ -5155,7 +5239,423 @@ def abrir_sistema_com_logo(username, login_win):
     carregar_clientes()
     
 
-    # ====== PONTUAÇÃO ======
+    
+# ====== DEVEDORES ======
+    dev_top = ttk.Frame(aba_devedores)
+    dev_top.pack(fill="both", expand=True)
+
+    frm_dev = ttk.Frame(dev_top, padding=8)
+    frm_dev.pack(fill="x", pady=6)
+
+    ttk.Label(frm_dev, text="CPF").grid(row=0, column=0, sticky="w", padx=6, pady=4)
+    ent_cpf_dev = ttk.Entry(frm_dev, width=18)
+    ent_cpf_dev.grid(row=0, column=1, padx=6, pady=4, sticky="w")
+    ent_cpf_dev.bind("<KeyRelease>", lambda e: formatar_cpf(e, ent_cpf_dev))
+
+    ttk.Label(frm_dev, text="Nome (auto)").grid(row=0, column=2, sticky="w", padx=6, pady=4)
+    ent_nome_dev = ttk.Entry(frm_dev, width=34, state="readonly")
+    ent_nome_dev.grid(row=0, column=3, padx=6, pady=4, sticky="w")
+
+    ttk.Label(frm_dev, text="Data p/ pagar (dd/mm/aaaa)").grid(row=0, column=4, sticky="w", padx=6, pady=4)
+    ent_data_dev = ttk.Entry(frm_dev, width=16)
+    ent_data_dev.grid(row=0, column=5, padx=6, pady=4, sticky="w")
+
+    def _calendar_popup_for(entry: ttk.Entry):
+        """Popup simples de calendário (sem dependências externas)."""
+        try:
+            # Data inicial = valor do campo ou hoje
+            raw = (entry.get() or "").strip()
+            dmY = _parse_br_date_flex(raw)
+            if dmY:
+                d0, m0, y0 = dmY
+                cur_year, cur_month = int(y0), int(m0)
+            else:
+                today = datetime.date.today()
+                cur_year, cur_month = today.year, today.month
+
+            win = tk.Toplevel(root)
+            win.title("Escolher data")
+            win.resizable(False, False)
+            try:
+                win.transient(root)
+                win.grab_set()
+            except Exception:
+                pass
+
+            header = ttk.Frame(win, padding=8)
+            header.pack(fill="x")
+            body = ttk.Frame(win, padding=(8, 0, 8, 8))
+            body.pack(fill="both", expand=True)
+
+            lbl = ttk.Label(header, text="", font=("Segoe UI", 10, "bold"))
+            lbl.pack(side="left")
+
+            state = {"y": cur_year, "m": cur_month}
+
+            def _render():
+                for w in body.winfo_children():
+                    w.destroy()
+                y = state["y"]; m = state["m"]
+                meses_pt = ['', 'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
+                lbl.config(text=f"{meses_pt[m]} / {y}")
+                # Cabeçalho dias
+                days_pt = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
+                for c, name in enumerate(days_pt):
+                    ttk.Label(body, text=name, width=4, anchor="center").grid(row=0, column=c, padx=2, pady=2)
+                weeks = calendar.monthcalendar(y, m)
+                for r, week in enumerate(weeks, start=1):
+                    for c, day in enumerate(week):
+                        if day == 0:
+                            ttk.Label(body, text="", width=4).grid(row=r, column=c, padx=2, pady=2)
+                        else:
+                            def _pick(dd=day, mm=m, yy=y):
+                                try:
+                                    entry.delete(0, "end")
+                                    entry.insert(0, f"{dd:02d}/{mm:02d}/{yy:04d}")
+                                except Exception:
+                                    pass
+                                try:
+                                    win.destroy()
+                                except Exception:
+                                    pass
+                            ttk.Button(body, text=str(day), width=4, command=_pick).grid(row=r, column=c, padx=2, pady=2)
+
+            def _prev():
+                m = state["m"] - 1
+                y = state["y"]
+                if m < 1:
+                    m = 12; y -= 1
+                state["m"], state["y"] = m, y
+                _render()
+
+            def _next():
+                m = state["m"] + 1
+                y = state["y"]
+                if m > 12:
+                    m = 1; y += 1
+                state["m"], state["y"] = m, y
+                _render()
+
+            ttk.Button(header, text="<", width=3, command=_prev).pack(side="right", padx=(0, 6))
+            ttk.Button(header, text=">", width=3, command=_next).pack(side="right")
+
+            _render()
+        except Exception:
+            pass
+
+    def _on_click_data_dev(evt=None):
+        _calendar_popup_for(ent_data_dev)
+        return "break"
+
+    ent_data_dev.bind("<Button-1>", _on_click_data_dev)
+
+    ttk.Label(frm_dev, text="Valor (R$)").grid(row=0, column=6, sticky="w", padx=6, pady=4)
+    var_valor_dev = tk.StringVar(value="R$ ")
+    ent_valor_dev = ttk.Entry(frm_dev, width=12, textvariable=var_valor_dev)
+    ent_valor_dev.grid(row=0, column=7, padx=6, pady=4, sticky="w")
+
+    def _format_brl(v: float) -> str:
+        try:
+            v = float(v or 0.0)
+        except Exception:
+            v = 0.0
+        s = f"{v:,.2f}"  # 1,234.56
+        s = s.replace(",", "X").replace(".", ",").replace("X", ".")  # 1.234,56
+        return "R$ " + s
+
+    def _ensure_prefix_valor_dev(evt=None):
+        try:
+            cur = var_valor_dev.get() or ""
+            # Mantém prefixo R$
+            if not cur.startswith("R$"):
+                digits = re.sub(r"[^0-9,\.]", "", cur)
+                var_valor_dev.set("R$ " + digits)
+            elif cur == "R$":
+                var_valor_dev.set("R$ ")
+            ent_valor_dev.icursor("end")
+        except Exception:
+            pass
+
+    def _format_valor_dev(evt=None):
+        try:
+            val = _parse_valor_br(var_valor_dev.get())
+            if val > 0:
+                var_valor_dev.set(_format_brl(val))
+            else:
+                _ensure_prefix_valor_dev()
+        except Exception:
+            pass
+
+    ent_valor_dev.bind("<FocusIn>", _ensure_prefix_valor_dev)
+    ent_valor_dev.bind("<KeyRelease>", _ensure_prefix_valor_dev)
+    ent_valor_dev.bind("<FocusOut>", _format_valor_dev)
+
+    def _cpf_digits(s: str) -> str:
+        return re.sub(r"\D", "", str(s or ""))
+
+    def _cpf_format(d: str) -> str:
+        d = _cpf_digits(d)
+        if len(d) != 11:
+            return str(d)
+        return f"{d[0:3]}.{d[3:6]}.{d[6:9]}-{d[9:11]}"
+
+    def _get_cliente_nome_by_cpf(cpf_in: str) -> str:
+        try:
+            cpf_raw = (cpf_in or "").strip()
+            d = _cpf_digits(cpf_raw)
+            if len(d) != 11:
+                return ""
+            candidates = [cpf_raw, d, _cpf_format(d)]
+            for c in candidates:
+                if not c:
+                    continue
+                cursor.execute("SELECT nome FROM clientes WHERE cpf=?", (c,))
+                r = cursor.fetchone()
+                if r and (r[0] or "").strip():
+                    return (r[0] or "").strip()
+            # Fallback: compara só dígitos
+            cursor.execute("SELECT cpf, nome FROM clientes")
+            for c, n in (cursor.fetchall() or []):
+                if _cpf_digits(c) == d and (n or "").strip():
+                    return (n or "").strip()
+        except Exception:
+            return ""
+        return ""
+
+    def _buscar_nome_por_cpf_dev(evt=None):
+        try:
+            cpf_raw = (ent_cpf_dev.get() or "").strip()
+            d = _cpf_digits(cpf_raw)
+            # Só busca quando CPF estiver completo (11 dígitos)
+            if len(d) != 11:
+                nome = ""
+            else:
+                nome = _get_cliente_nome_by_cpf(cpf_raw)
+            ent_nome_dev.config(state="normal")
+            ent_nome_dev.delete(0, "end")
+            ent_nome_dev.insert(0, nome)
+            ent_nome_dev.config(state="readonly")
+        except Exception:
+            try:
+                ent_nome_dev.config(state="readonly")
+            except Exception:
+                pass
+
+
+
+    # Debounce para buscar nome automaticamente após digitar CPF
+    _dev_after = {"id": None}
+
+    def _on_cpf_dev_key(evt=None):
+        # garante CPF formatado
+        try:
+            formatar_cpf(evt, ent_cpf_dev)
+        except Exception:
+            pass
+        # cancela busca anterior enquanto o usuário digita
+        try:
+            if _dev_after.get("id"):
+                ent_cpf_dev.after_cancel(_dev_after["id"])
+        except Exception:
+            pass
+        # agenda nova busca
+        _dev_after["id"] = ent_cpf_dev.after(180, _buscar_nome_por_cpf_dev)
+
+    # substitui o bind de KeyRelease para buscar automaticamente
+    ent_cpf_dev.bind("<KeyRelease>", _on_cpf_dev_key)
+    ent_cpf_dev.bind("<FocusOut>", _buscar_nome_por_cpf_dev)
+    ent_cpf_dev.bind("<Return>", _buscar_nome_por_cpf_dev)
+
+    tree_dev_frame = ttk.Frame(dev_top)
+    tree_dev_frame.pack(fill="both", expand=True, pady=(6, 8))
+
+    tree_devedores = ttk.Treeview(
+        tree_dev_frame,
+        columns=("id", "cpf", "nome", "data", "valor", "status"),
+        show="headings",
+        height=14,
+    )
+    headers = {
+        "id": ("ID", 60),
+        "cpf": ("CPF", 120),
+        "nome": ("NOME", 220),
+        "data": ("DATA", 120),
+        "valor": ("VALOR", 110),
+        "status": ("STATUS", 110),
+    }
+    for col in ("id", "cpf", "nome", "data", "valor", "status"):
+        tree_devedores.heading(col, text=headers[col][0])
+        tree_devedores.column(col, width=headers[col][1], anchor="w")
+
+    vsb_dev = ttk.Scrollbar(tree_dev_frame, orient="vertical", command=tree_devedores.yview)
+    tree_devedores.configure(yscrollcommand=vsb_dev.set)
+    tree_devedores.pack(side="left", fill="both", expand=True)
+    vsb_dev.pack(side="right", fill="y")
+
+    try:
+        configure_zebra_tags(tree_devedores, 'dark')
+    except Exception:
+        pass
+
+    def _parse_valor_br(s: str) -> float:
+        s = (s or "").strip().replace("R$", "").replace(" ", "")
+        if s.count(",") == 1 and s.count(".") >= 1:
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", ".")
+        try:
+            return float(s)
+        except Exception:
+            return 0.0
+
+    def carregar_devedores():
+        try:
+            for iid in tree_devedores.get_children(""):
+                tree_devedores.delete(iid)
+            cursor.execute(
+                """SELECT id, cpf, nome, data_pagamento, COALESCE(valor,0), COALESCE(pago,0)
+                   FROM devedores
+                   ORDER BY COALESCE(pago,0) ASC, date(data_iso) ASC, nome ASC"""
+            )
+            rows = cursor.fetchall() or []
+            for (id_, cpf, nome, data_pag, valor, pago) in rows:
+                status = "Pago" if int(pago or 0) == 1 else "Pendente"
+                tree_devedores.insert(
+                    "", "end",
+                    values=(id_, cpf or "", nome or "", data_pag or "", f"R$ {float(valor or 0.0):.2f}", status)
+                )
+            try:
+                apply_zebra(tree_devedores)
+            except Exception:
+                pass
+        except Exception as ex:
+            try:
+                logging.error(f"Falha ao carregar devedores: {ex}", exc_info=True)
+            except Exception:
+                pass
+
+    def _limpar_form_dev():
+        ent_cpf_dev.delete(0, "end")
+        ent_data_dev.delete(0, "end")
+        ent_valor_dev.delete(0, "end")
+        ent_nome_dev.config(state="normal")
+        ent_nome_dev.delete(0, "end")
+        ent_nome_dev.config(state="readonly")
+
+    def salvar_devedor():
+        cpf = (ent_cpf_dev.get() or "").strip()
+        data_br = (ent_data_dev.get() or "").strip()
+        valor = _parse_valor_br(ent_valor_dev.get())
+        if not cpf:
+            messagebox.showwarning("Atenção", "Informe o CPF.")
+            return
+        # Normaliza CPF e busca nome do cliente
+        d = _cpf_digits(cpf)
+        if len(d) == 11:
+            cpf = _cpf_format(d)
+        nome = _get_cliente_nome_by_cpf(cpf)
+        if not nome:
+            messagebox.showwarning("Atenção", "CPF não encontrado em Clientes. Cadastre o cliente primeiro.")
+            return
+
+        dmY = _parse_br_date_flex(data_br)
+        if not dmY:
+            messagebox.showwarning("Atenção", "Data inválida. Use dd/mm/aaaa.")
+            return
+        d, m, y = dmY
+        try:
+            data_iso = datetime.date(int(y), int(m), int(d)).strftime("%Y-%m-%d")
+        except Exception:
+            messagebox.showwarning("Atenção", "Data inválida.")
+            return
+        if valor <= 0:
+            messagebox.showwarning("Atenção", "Informe um valor maior que zero.")
+            return
+
+        criado_em = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with conn:
+            cursor.execute(
+                """INSERT INTO devedores(cpf,nome,data_pagamento,data_iso,valor,pago,criado_em)
+                   VALUES(?,?,?,?,?,0,?)""",
+                (cpf, nome, f"{d:02d}/{m:02d}/{y:04d}", data_iso, float(valor), criado_em),
+            )
+        carregar_devedores()
+        _limpar_form_dev()
+        messagebox.showinfo("OK", "Devedor registrado com sucesso!")
+
+    def marcar_pago():
+        sel = tree_devedores.selection()
+        if not sel:
+            messagebox.showwarning("Atenção", "Selecione um devedor na lista.")
+            return
+        vals = tree_devedores.item(sel[0], "values")
+        if not vals:
+            return
+        id_ = vals[0]
+        pago_em = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with conn:
+
+            # Marca como pago e lança no Caixa (entrada)
+            agora_dt = datetime.datetime.now()
+            data_caixa = agora_dt.strftime("%d/%m/%Y")
+            hora_caixa = agora_dt.strftime("%H:%M:%S")
+            motivo_caixa = "Recebimento Devedor"
+
+            # valor total do devedor (sempre)
+            try:
+                cursor.execute("SELECT COALESCE(valor,0) FROM devedores WHERE id=?", (id_,))
+                valor_pago = float((cursor.fetchone() or [0])[0] or 0.0)
+            except Exception:
+                valor_pago = 0.0
+
+            cursor.execute("UPDATE devedores SET pago=1, pago_em=? WHERE id=?", (pago_em, id_))
+            cursor.execute(
+                "INSERT INTO caixa(valor, data, hora, motivo) VALUES(?,?,?,?)",
+                (float(valor_pago), data_caixa, hora_caixa, motivo_caixa),
+            )
+        carregar_devedores()
+        messagebox.showinfo("OK", "Marcado como PAGO.")
+
+    def excluir_devedor():
+        sel = tree_devedores.selection()
+        if not sel:
+            messagebox.showwarning("Atenção", "Selecione um devedor na lista.")
+            return
+        vals = tree_devedores.item(sel[0], "values")
+        if not vals:
+            return
+        id_ = vals[0]
+        if not messagebox.askyesno("Confirmar", "Excluir este registro de devedor?"):
+            return
+        with conn:
+            cursor.execute("DELETE FROM devedores WHERE id=?", (id_,))
+        carregar_devedores()
+
+    def _on_tree_double_click(evt=None):
+        sel = tree_devedores.selection()
+        if not sel:
+            return
+        vals = tree_devedores.item(sel[0], "values")
+        if not vals:
+            return
+        _limpar_form_dev()
+        ent_cpf_dev.insert(0, vals[1])
+        _buscar_nome_por_cpf_dev()
+        ent_data_dev.insert(0, vals[3])
+        ent_valor_dev.insert(0, str(vals[4]).replace('R$', '').strip())
+
+    tree_devedores.bind("<Double-1>", _on_tree_double_click)
+
+    btns_dev = ttk.Frame(dev_top)
+    btns_dev.pack(fill="x", pady=(0, 8))
+    ttk.Button(btns_dev, text="➕ Salvar", style="Success.TButton", command=salvar_devedor).pack(side="left", padx=6)
+    ttk.Button(btns_dev, text="✅ Marcar Pago", style="Secondary.TButton", command=marcar_pago).pack(side="left", padx=6)
+    ttk.Button(btns_dev, text="🗑 Excluir", style="Secondary.TButton", command=excluir_devedor).pack(side="left", padx=6)
+    ttk.Button(btns_dev, text="🔄 Atualizar", style="Secondary.TButton", command=carregar_devedores).pack(side="right", padx=6)
+
+    carregar_devedores()
+
+# ====== PONTUAÇÃO ======
     pt_top = ttk.Frame(aba_pontuacao, padding=8)
     pt_top.pack(fill="x", pady=(0, 6))
 
