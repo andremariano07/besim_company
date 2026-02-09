@@ -571,7 +571,7 @@ def force_attach_statusbar(win):
 DISABLE_AUTO_UPDATE = (
     False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "5.1"
+APP_VERSION = "5.2"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -900,6 +900,32 @@ def start_devedores_notify_on_open(root_widget):
 # ===================== BANCO =====================
 conn = sqlite3.connect(DB_PATH)
 cursor = conn.cursor()
+
+# >>> NOVO: garante tabela CLIENTES (evita erro: no such table: clientes)
+def ensure_clientes_table_and_columns():
+    try:
+        cursor.execute("CREATE TABLE IF NOT EXISTS clientes (cpf TEXT PRIMARY KEY, nome TEXT, telefone TEXT)")
+        # Migração segura: adiciona colunas faltantes se o banco for antigo
+        cursor.execute("PRAGMA table_info(clientes)")
+        cols = {c[1] for c in (cursor.fetchall() or [])}
+        altered = False
+        if 'telefone' not in cols:
+            cursor.execute("ALTER TABLE clientes ADD COLUMN telefone TEXT")
+            altered = True
+        if 'nome' not in cols:
+            cursor.execute("ALTER TABLE clientes ADD COLUMN nome TEXT")
+            altered = True
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_clientes_nome ON clientes(nome)")
+        conn.commit()
+    except Exception:
+        try:
+            conn.commit()
+        except Exception:
+            pass
+
+ensure_clientes_table_and_columns()
+# <<< FIM NOVO: CLIENTES
+
 # >>> NOVO: agendamento de retirada de celulares
 cursor.execute(
     """
@@ -2535,7 +2561,9 @@ class ReleaseNotesWindow(tk.Toplevel):
 
         # Prepara logo marca d'água
         self._bg_img = None
-        logo_path = str(P('logo.png'))
+        logo_path = str(P('Logo_att.png'))
+        if not os.path.exists(logo_path):
+            logo_path = str(P('logo.png'))
         if os.path.exists(logo_path):
             try:
                 img = Image.open(logo_path).convert("RGBA")
@@ -2553,6 +2581,19 @@ class ReleaseNotesWindow(tk.Toplevel):
         self._content_id = self.canvas.create_window(0, 0, anchor="nw", window=self.content)
 
         # Header
+        # Logo da atualização (preferência: Logo_att.png)
+        self._header_logo = None
+        try:
+            _hdr_path = str(P('Logo_att.png'))
+            if not os.path.exists(_hdr_path):
+                _hdr_path = str(P('logo.png'))
+            if os.path.exists(_hdr_path):
+                _img = Image.open(_hdr_path).convert('RGBA')
+                _img = _img.resize((240, 80))
+                self._header_logo = ImageTk.PhotoImage(_img)
+                tk.Label(self.content, image=self._header_logo, bg="#0f1115").pack(anchor="w", padx=18, pady=(18, 0))
+        except Exception:
+            self._header_logo = None
         tk.Label(
             self.content,
             text=f"✨ Novidades / Melhorias — v{self.version}",
@@ -2604,6 +2645,8 @@ class ReleaseNotesWindow(tk.Toplevel):
         # Teclas
         self.bind("<Return>", lambda e: self._continue())
         self.bind("<Escape>", lambda e: self._later())
+        # Se o usuário fechar no X, considera como 'Continuar' para não reabrir automaticamente
+        self.protocol("WM_DELETE_WINDOW", self._continue)
 
         # Resize
         self.bind("<Configure>", self._on_resize)
@@ -2667,7 +2710,6 @@ def show_release_notes(master, force: bool = False):
             master.wait_window(win)
         except Exception:
             pass
-
         choice = getattr(win, '_choice', None)
         if choice == 'continue':
             try:
@@ -2680,7 +2722,20 @@ def show_release_notes(master, force: bool = False):
                 _meta_set('release_notes_deferred', str(version))
             except Exception:
                 pass
-            _RELEASE_NOTES_SESSION_SUPPRESS.add(str(version))
+            # Mesmo em 'Ler depois', marcamos como exibido para não reaparecer automaticamente
+            try:
+                _meta_set('release_notes_last_shown', str(version))
+            except Exception:
+                pass
+        else:
+            # Fechou sem escolher (ex.: clicou no X) — marque como exibido
+            try:
+                _meta_set('release_notes_last_shown', str(version))
+            except Exception:
+                pass
+
+        # Em qualquer caso, suprime nesta sessão para não ficar mostrando toda hora
+        _RELEASE_NOTES_SESSION_SUPPRESS.add(str(version))
 
     except Exception as ex:
         try:
@@ -3162,6 +3217,108 @@ def gerar_relatorio_vendas_dia_pdf(data_str: str = None, abrir_pdf: bool = True)
     c.setFont("Helvetica-Bold", 12)
     c.drawString(40, y, f"Total de vendas do dia: R$ {total_dia:.2f}")
     y -= 24
+
+    # ----------------- FECHAMENTO EXPLICADO: Entradas por origem -----------------
+    # Este bloco detalha as entradas do dia por categoria e faz uma conferência rápida.
+    try:
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(40, y, "Entradas no Caixa (por origem)")
+        y -= 18
+        c.setFont("Helvetica", 10)
+
+        def _classificar_motivo_rel(vlr, mot):
+            mtxt = (mot or '').strip()
+            low = mtxt.lower()
+            if not mtxt:
+                return 'Outros'
+            if low.startswith('venda'):
+                return 'Venda'
+            if low.startswith('upgrade'):
+                return 'Upgrade'
+            if low.startswith('os') or 'manuten' in low:
+                return 'Manutenção'
+            if 'devedor' in low:
+                return 'Devedor'
+            if low.startswith('estorno'):
+                return 'Estorno'
+            if float(vlr or 0) < 0:
+                return 'Saída'
+            return 'Outros'
+
+        # Lançamentos do CAIXA do dia
+        cursor.execute("SELECT COALESCE(valor,0), COALESCE(motivo,'') FROM caixa WHERE data=?", (data_alvo,))
+        rows_cx = cursor.fetchall() or []
+
+        soma_pos = { 'Venda': 0.0, 'Manutenção': 0.0, 'Devedor': 0.0, 'Upgrade': 0.0, 'Outros': 0.0, 'Estorno': 0.0 }
+        entradas_cx = 0.0
+        saidas_cx_abs = 0.0
+        for vv, mot in rows_cx:
+            v = float(vv or 0.0)
+            if v > 0:
+                entradas_cx += v
+                cat = _classificar_motivo_rel(v, mot)
+                soma_pos[cat] = float(soma_pos.get(cat, 0.0) + v)
+            elif v < 0:
+                saidas_cx_abs += abs(v)
+
+        # Fontes oficiais (para explicar melhor)
+        cursor.execute("SELECT COALESCE(SUM(total),0) FROM vendas WHERE data=?", (data_alvo,))
+        vendas_oficial = float((cursor.fetchone() or [0])[0] or 0.0)
+
+        cursor.execute("SELECT COALESCE(SUM(valor),0), COUNT(1) FROM manutencao WHERE COALESCE(aprovado,0)=1 AND data=?", (data_alvo,))
+        os_sum, os_cnt = cursor.fetchone() or (0, 0)
+        os_sum = float(os_sum or 0.0)
+        os_cnt = int(os_cnt or 0)
+
+        cursor.execute("SELECT COALESCE(SUM(valor),0), COUNT(1) FROM devedores WHERE COALESCE(pago,0)=1 AND data_pagamento=?", (data_alvo,))
+        dev_sum, dev_cnt = cursor.fetchone() or (0, 0)
+        dev_sum = float(dev_sum or 0.0)
+        dev_cnt = int(dev_cnt or 0)
+
+        c.drawString(40, y, f"1) Vendas do dia (tabela VENDAS): R$ {vendas_oficial:.2f}")
+        y -= 14
+        c.drawString(40, y, f"2) OS aprovadas (qtd {os_cnt}): R$ {os_sum:.2f}")
+        y -= 14
+        c.drawString(40, y, f"3) Devedores pagos (qtd {dev_cnt}): R$ {dev_sum:.2f}")
+        y -= 14
+        c.drawString(40, y, f"4) Upgrade (tabela CAIXA): R$ {float(soma_pos.get('Upgrade',0.0)):.2f}")
+        y -= 14
+        c.drawString(40, y, f"5) Outras entradas (tabela CAIXA): R$ {float(soma_pos.get('Outros',0.0)):.2f}")
+        y -= 16
+
+        entradas_explicadas = float(vendas_oficial + os_sum + dev_sum + float(soma_pos.get('Upgrade',0.0)) + float(soma_pos.get('Outros',0.0)))
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(40, y, f"TOTAL DE ENTRADAS (explicado): R$ {entradas_explicadas:.2f}")
+        y -= 18
+        c.setFont("Helvetica", 10)
+        c.drawString(40, y, "Conferência rápida com lançamentos do CAIXA:")
+        y -= 14
+        c.drawString(60, y, f"• Entradas no CAIXA (valor > 0): R$ {entradas_cx:.2f}")
+        y -= 14
+        c.drawString(60, y, f"• Saídas no CAIXA (valor < 0): R$ {saidas_cx_abs:.2f}")
+        y -= 14
+        c.drawString(60, y, f"• Saldo do CAIXA (Entradas - Saídas): R$ {(entradas_cx - saidas_cx_abs):.2f}")
+        y -= 18
+        c.drawString(40, y, "Obs.: o \"Total líquido do caixa\" ao final do relatório considera os lançamentos do CAIXA do dia.")
+        y -= 18
+
+        if y < 120:
+            c.showPage()
+            if os.path.exists(logo_path_local):
+                try:
+                    c.drawImage(ImageReader(logo_path_local), 40, 780, width=140, height=40, preserveAspectRatio=True, mask="auto")
+                except Exception:
+                    pass
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(40, 760, f"Relatório de Vendas - {data_alvo} (continuação)")
+            c.setFont("Helvetica", 11)
+            c.drawString(40, 742, "-" * 110)
+            y = 720
+    except Exception:
+        pass
+
+    # -----------------------------------------------------------------------------
+
     # Saídas do dia
     c.setFont("Helvetica-Bold", 12)
     c.drawString(40, y, "Saídas do dia")
@@ -4372,7 +4529,7 @@ def abrir_sistema_com_logo(username, login_win):
             if abas.select() == aba_vendas._w:
                 carregar_vendas_dia()
             if abas.select() == aba_caixa._w:
-                atualizar_totais_ganho_dia_caixa()
+                atualizar_caixa()
         except Exception:
             pass
 
@@ -5176,6 +5333,8 @@ def abrir_sistema_com_logo(username, login_win):
     e_tel.grid(row=0, column=5, padx=6)
     e_cpf.bind("<KeyRelease>", lambda e: formatar_cpf(e, e_cpf))
     e_tel.bind("<KeyRelease>", lambda e: formatar_telefone(e, e_tel))
+    # Controle de edição: guarda o CPF original para permitir alteração do CPF (troca de chave)
+    original_cpf = {"value": None}  # dict mutável para uso dentro das funções
     # -- FUNÇÕES --
     @ui_safe('Clientes')
     def carregar_clientes():
@@ -5184,19 +5343,73 @@ def abrir_sistema_com_logo(username, login_win):
             "SELECT cpf, nome, telefone FROM clientes ORDER BY nome"
         ):
             tree_cli.insert("", "end", values=(cpf, nome, tel))
+        apply_zebra(tree_cli)
     def salvar_cliente():
-        cpf = e_cpf.get()
-        nome = e_nome.get()
-        tel = e_tel.get()
+        """Salva cliente e permite troca de CPF (migração completa de referências)."""
+        cpf = (e_cpf.get() or "").strip()
+        nome = (e_nome.get() or "").strip()
+        tel = (e_tel.get() or "").strip()
         if not cpf or not nome or not tel:
             messagebox.showwarning("Atenção", "Preencha todos os campos")
             return
+        orig = original_cpf.get("value")
         with conn:
-            cursor.execute(
-                "INSERT OR REPLACE INTO clientes (cpf, nome, telefone) VALUES (?,?,?)",
-                (cpf, nome, tel),
-            )
+            if orig and orig != cpf:
+                cursor.execute("SELECT 1 FROM clientes WHERE cpf=?", (cpf,))
+                if cursor.fetchone():
+                    messagebox.showerror("Erro", "Já existe um cliente cadastrado com este CPF.\nEscolha outro CPF.")
+                    return
+                # clientes (troca de chave)
+                cursor.execute("DELETE FROM clientes WHERE cpf=?", (orig,))
+                cursor.execute("INSERT OR REPLACE INTO clientes (cpf, nome, telefone) VALUES (?,?,?)", (cpf, nome, tel))
+                # migração CPF nas tabelas relacionadas
+                try:
+                    cursor.execute("UPDATE vendas SET cpf=? WHERE cpf=?", (cpf, orig))
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("UPDATE manutencao SET cpf=? WHERE cpf=?", (cpf, orig))
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("UPDATE devedores SET cpf=? WHERE cpf=?", (cpf, orig))
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("UPDATE resgates_pontos SET cpf=? WHERE cpf=?", (cpf, orig))
+                except Exception:
+                    pass
+                # pontuacao (PK cpf) com merge
+                try:
+                    cursor.execute("SELECT COALESCE(pontos,0) FROM pontuacao WHERE cpf=?", (orig,))
+                    old_row = cursor.fetchone()
+                    old_pts = int((old_row[0] if old_row else 0) or 0)
+                    cursor.execute("SELECT COALESCE(pontos,0) FROM pontuacao WHERE cpf=?", (cpf,))
+                    new_row = cursor.fetchone()
+                    new_pts = int((new_row[0] if new_row else 0) or 0)
+                    if new_row is not None:
+                        cursor.execute("UPDATE pontuacao SET pontos=? WHERE cpf=?", (old_pts + new_pts, cpf))
+                        cursor.execute("DELETE FROM pontuacao WHERE cpf=?", (orig,))
+                    else:
+                        cursor.execute("UPDATE pontuacao SET cpf=? WHERE cpf=?", (cpf, orig))
+                except Exception:
+                    pass
+            else:
+                cursor.execute("INSERT OR REPLACE INTO clientes (cpf, nome, telefone) VALUES (?,?,?)", (cpf, nome, tel))
         carregar_clientes()
+        # Limpa formulário após salvar
+        try:
+            e_cpf.config(state="normal")
+        except Exception:
+            pass
+        e_cpf.delete(0, "end")
+        e_nome.delete(0, "end")
+        e_tel.delete(0, "end")
+        original_cpf["value"] = None
+        try:
+            e_cpf.focus_set()
+        except Exception:
+            pass
     # -- BUSCA POR NOME (filtro incremental) --
     filtro_frame = ttk.Frame(aba_clientes, padding=8)
     filtro_frame.pack(fill="x")
@@ -5231,7 +5444,12 @@ def abrir_sistema_com_logo(username, login_win):
         e_cpf.insert(0, cpf)
         e_nome.insert(0, nome)
         e_tel.insert(0, tel)
-        e_cpf.config(state="readonly")
+        # CPF permanece editável; guardamos o CPF original para permitir alteração
+        original_cpf["value"] = cpf
+        try:
+            e_cpf.config(state="normal")
+        except Exception:
+            pass
     tree_cli.bind("<Double-1>", carregar_para_edicao)
     ttk.Button(form_cli, text="Salvar Cliente", command=salvar_cliente).grid(
         row=1, column=1, pady=8
@@ -5974,10 +6192,48 @@ def abrir_sistema_com_logo(username, login_win):
                     (estoque - qtd, codigo),
                 )
                 # >>> ATUALIZADO: grava hora na entrada do caixa (motivo NULL)
-                cursor.execute(
-                    "INSERT INTO caixa(valor,data,hora) VALUES (?,?,?)",
-                    (total, data, hora),
-                )
+                # Motivo da entrada (Venda) — robusto para diferentes nomes de variáveis
+                _prod = str(locals().get('produto') or locals().get('descricao') or locals().get('prod') or locals().get('produto_nome') or locals().get('nome_produto') or '').strip()
+                _qtd = None
+                for _k in ('qtd','quantidade','qtd_v','qtd_prod'):
+                    if _k in locals() and locals().get(_k) not in (None,''):
+                        _qtd = locals().get(_k)
+                        break
+                try:
+                    _qtd = int(_qtd) if _qtd is not None else None
+                except Exception:
+                    _qtd = None
+                _pg = ''
+                for _k in ('pagamento','forma_pagamento','pg'):
+                    if _k in locals() and str(locals().get(_k) or '').strip():
+                        _pg = str(locals().get(_k) or '').strip()
+                        break
+                if not _pg:
+                    try:
+                        _pg = str(ent_pg_v.get() or '').strip()
+                    except Exception:
+                        _pg = ''
+                _cli = str(locals().get('cliente') or locals().get('nome') or locals().get('nome_cliente') or '').strip()
+                motivo_caixa = 'Venda'
+                if _prod:
+                    motivo_caixa += f" - {_prod}"
+                if _qtd is not None:
+                    motivo_caixa += f" x{_qtd}"
+                if _pg:
+                    motivo_caixa += f" ({_pg})"
+                if _cli:
+                    motivo_caixa += f" - {_cli}"
+                motivo_caixa = (motivo_caixa or '').strip()[:90]
+                try:
+                    cursor.execute(
+                        "INSERT INTO caixa(valor,data,hora,motivo) VALUES (?,?,?,?)",
+                        (total, data, hora, motivo_caixa),
+                    )
+                except Exception:
+                    cursor.execute(
+                        "INSERT INTO caixa(valor,data,hora) VALUES (?,?,?)",
+                        (total, data, hora),
+                    )
                 cursor.execute(
                     "INSERT OR IGNORE INTO clientes(cpf,nome) VALUES (?,?)",
                     (cpf, cliente),
@@ -6290,6 +6546,9 @@ def abrir_sistema_com_logo(username, login_win):
     totais_dia_box = ttk.Frame(top_cx)
     totais_dia_box.pack(side="left", padx=(16, 0))
 
+    # Placeholder para evitar alerta/erro de variável não definida (Pylance)
+    lbl_os_aprov_dia_cx = None
+
     lbl_vendas_dia_cx = ttk.Label(totais_dia_box, text="Vendas: R$ 0,00", font=("Segoe UI", 10, "bold"))
     lbl_vendas_dia_cx.grid(row=0, column=0, sticky="w", padx=(0, 12))
 
@@ -6298,6 +6557,10 @@ def abrir_sistema_com_logo(username, login_win):
 
     lbl_liquido_dia_cx = ttk.Label(totais_dia_box, text="Líquido: R$ 0,00", font=("Segoe UI", 10, "bold"))
     lbl_liquido_dia_cx.grid(row=0, column=2, sticky="w")
+
+    # OS aprovadas (dia)
+    lbl_os_aprov_dia_cx = ttk.Label(totais_dia_box, text="OS aprovadas: R$ 0,00", font=("Segoe UI", 10, "bold"))
+    lbl_os_aprov_dia_cx.grid(row=0, column=3, sticky="w", padx=(12, 0))
 
     @ui_safe('Caixa')
     def atualizar_totais_ganho_dia_caixa():
@@ -6308,6 +6571,20 @@ def abrir_sistema_com_logo(username, login_win):
             lbl_vendas_dia_cx.config(text=f"Vendas: {fmt(vendas_dia)}")
             lbl_saidas_dia_cx.config(text=f"Saídas: {fmt(saidas_dia)}")
             lbl_liquido_dia_cx.config(text=f"Líquido: {fmt(liquido_dia)}")
+            # OS aprovadas do dia (somente aprovadas)
+            try:
+                hoje = datetime.datetime.now().strftime("%d/%m/%Y")
+                cursor.execute("SELECT COALESCE(SUM(valor),0), COUNT(1) FROM manutencao WHERE COALESCE(aprovado,0)=1 AND data=?", (hoje,))
+                _sum_os, _cnt_os = cursor.fetchone() or (0, 0)
+                _sum_os = float(_sum_os or 0.0)
+                _cnt_os = int(_cnt_os or 0)
+                try:
+                    if lbl_os_aprov_dia_cx is not None:
+                        lbl_os_aprov_dia_cx.config(text=f"OS aprovadas: {fmt(_sum_os)} ({_cnt_os})")
+                except Exception:
+                    pass
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -6886,10 +7163,25 @@ def abrir_sistema_com_logo(username, login_win):
         try:
             with conn:
                 # >>> ATUALIZADO: grava hora na entrada do caixa (motivo NULL)
-                cursor.execute(
-                    "INSERT INTO caixa(valor,data,hora) VALUES (?,?,?)",
-                    (valor, hoje, hora),
-                )
+                # Motivo da entrada (OS aprovada) — robusto
+                _nome_os = str(locals().get('nome') or locals().get('cliente') or locals().get('nome_cliente') or '').strip()
+                if not _nome_os:
+                    try:
+                        _nome_os = str(ent_nome_m.get() or '').strip()
+                    except Exception:
+                        _nome_os = ''
+                motivo_caixa = f"OS {os_num} aprovada" + (f" - {_nome_os}" if _nome_os else "")
+                motivo_caixa = (motivo_caixa or '').strip()[:90]
+                try:
+                    cursor.execute(
+                        "INSERT INTO caixa(valor,data,hora,motivo) VALUES (?,?,?,?)",
+                        (valor, hoje, hora, motivo_caixa),
+                    )
+                except Exception:
+                    cursor.execute(
+                        "INSERT INTO caixa(valor,data,hora) VALUES (?,?,?)",
+                        (valor, hoje, hora),
+                    )
                 cursor.execute(
                     "UPDATE manutencao SET aprovado=1 WHERE os=?", (os_num,)
                 ) # vírgula aqui
