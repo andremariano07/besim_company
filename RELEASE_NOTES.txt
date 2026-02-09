@@ -1,3 +1,9 @@
+VERSÃO 5.2
+- Adicionado Aba Devedores
+- Corrigido Algumas Coisas
+- Recriado toda a aba caixa
+- Recriado todo o relatorio de fechamento de caixa
+
 VERSÃO 5.1
 - Adicionado Aba Devedores
 - Corrigido Algumas Coisas
