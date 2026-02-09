@@ -1,3 +1,7 @@
+VERSÃO 5.1
+- Adicionado Aba Devedores
+- Corrigido Algumas Coisas
+
 VERSÃO 5.0
 - Melhoria no Codigo
 - Bugs Corrigidos
