@@ -1,3 +1,6 @@
+VERSÃO 5.5
+- Realizdo Otimização do codigo
+
 VERSÃO 5.4
 - Adicionado Aba Devedores
 - Corrigido Algumas Coisas
