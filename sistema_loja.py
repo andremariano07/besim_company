@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 """
 Sistema Loja - versão unificada com auto-update (após login), splash estilizada e barra de progresso real.
@@ -571,7 +570,7 @@ def force_attach_statusbar(win):
 DISABLE_AUTO_UPDATE = (
     False # <-- Evita que a atualização automática sobrescreva este patch
 )
-APP_VERSION = "5.4"
+APP_VERSION = "5.2"
 OWNER = "andremariano07"
 REPO = "besim_company"
 BRANCH = "main"
@@ -603,7 +602,6 @@ _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
 # (Opcional) TELEGRAM_DEDUPE_HOURS_LOW=6
 # (Opcional) TELEGRAM_DEDUPE_HOURS_ZERO=12
 import urllib.parse
-import urllib.request
 import threading
 import time
 
@@ -6875,7 +6873,7 @@ def abrir_sistema_com_logo(username, login_win):
             # 4) Limpa lançamentos do dia
             with conn:
                 cursor.execute("DELETE FROM caixa WHERE data=?", (hoje,))
-            messagebox.showinfo("Fechar Caixa", f"Caixa do dia {hoje} fechado com sucesso!\nRelatório gerado:\n{pdf_path or "(sem relatório)"}")
+            messagebox.showinfo("Fechar Caixa", f"Caixa do dia {hoje} fechado com sucesso!\nRelatório gerado:\n{pdf_path or '(sem relatório)'}")
             try:
                 carregar_historico_cx()
             except Exception:
