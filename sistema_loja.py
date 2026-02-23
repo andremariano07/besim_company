@@ -21,6 +21,32 @@ import datetime
 import calendar
 import re
 
+
+# ===================== PADRÃO: Datas e Logging =====================
+# Padroniza formatações de data/hora usadas no sistema.
+def now_br() -> str:
+    return datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+def today_br() -> str:
+    return datetime.date.today().strftime("%d/%m/%Y")
+
+def today_iso() -> str:
+    return datetime.date.today().strftime("%Y-%m-%d")
+def now_iso() -> str:
+    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+def log_exc(context: str, ex: Exception = None):
+    """Log consistente para exceções capturadas."""
+    try:
+        if ex is None:
+            logging.error("%s", context, exc_info=True)
+        else:
+            logging.error("%s: %s", context, ex, exc_info=True)
+    except Exception:
+        # nunca quebrar por logging
+        pass
+
+# ===================== FIM PADRÃO: Datas e Logging =====================
+
+
 # ===================== UTIL: Datas BR flexíveis =====================
 # Aceita 'd/m/aaaa' ou 'dd/mm/aaaa' e retorna tupla (d, m, a) como ints.
 # Retorna None se não conseguir interpretar.
@@ -40,6 +66,7 @@ def _parse_br_date_flex(s: str):
 import os
 import sys
 import hashlib
+import base64
 import platform
 import logging
 import urllib.request
@@ -77,8 +104,8 @@ def _app_base_dir() -> _Path:
     try:
         if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
             return _Path(getattr(sys, '_MEIPASS'))
-    except Exception:
-        pass
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     return _Path(__file__).resolve().parent
 
 BASE_DIR = _app_base_dir()
@@ -136,8 +163,8 @@ def ui_safe(title: str = 'Erro'):
                 logging.error('Erro em %s: %s', getattr(fn, '__name__', 'callback'), ex, exc_info=True)
                 try:
                     messagebox.showerror(title, f'Ocorreu um erro:\n{ex}')
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
                 return None
         return wrapper
     return deco
@@ -215,14 +242,14 @@ def tocar_som_agradavel(path_wav: str = None):
                     import winsound
                     winsound.PlaySound(path_wav, winsound.SND_FILENAME | winsound.SND_ASYNC)
                     return
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
             elif sistema == "Darwin":
                 try:
                     subprocess.Popen(["afplay", path_wav], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     return
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
             else:
                 for player in (["paplay", path_wav], ["aplay", path_wav]):
                     try:
@@ -235,18 +262,16 @@ def tocar_som_agradavel(path_wav: str = None):
             if root_tmp and root_tmp.winfo_exists():
                 root_tmp.bell()
                 return
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         try:
             if platform.system() == "Windows":
                 import winsound
                 winsound.Beep(880, 120)
-        except Exception:
-            pass
-    except Exception:
-        pass
-
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
 BASE_FONT = ("Segoe UI", 10)
 HEADING_FONT = ("Segoe UI", 11, "bold")
 BUTTON_FONT = ("Segoe UI", 10, "bold")
@@ -403,9 +428,8 @@ def _install_global_statusbar_hook():
             try:
                 if bool(win.overrideredirect()):
                     return
-            except Exception:
-                pass
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             # Cria container
             bar = tk.Frame(win, bd=1, relief='flat')
             bar.pack(side='bottom', fill='x', pady=(0, 4))
@@ -426,8 +450,8 @@ def _install_global_statusbar_hook():
                     return
                 try:
                     win.after(60000, _tick_license)
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
             _tick_license()
 
             # Relógio (1s)
@@ -439,8 +463,8 @@ def _install_global_statusbar_hook():
                     return
                 try:
                     win.after(1000, _tick_clock)
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
             _tick_clock()
 
             # Marca referências
@@ -463,9 +487,8 @@ def _install_global_statusbar_hook():
                     if fg:
                         lbl_left.configure(fg=fg)
                         lbl_clock.configure(fg=fg)
-            except Exception:
-                pass
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
         except Exception:
             # Nunca quebrar criação de janelas
             return
@@ -478,9 +501,8 @@ def _install_global_statusbar_hook():
         except Exception:
             try:
                 _attach_statusbar_later(self)
-            except Exception:
-                pass
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
     def _top_init_hook(self, *args, **kwargs):
         _orig_top_init(self, *args, **kwargs)
         try:
@@ -488,17 +510,16 @@ def _install_global_statusbar_hook():
         except Exception:
             try:
                 _attach_statusbar_later(self)
-            except Exception:
-                pass
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
     tk.Tk.__init__ = _tk_init_hook
     tk.Toplevel.__init__ = _top_init_hook
 
 # Instala o hook o quanto antes
 try:
     _install_global_statusbar_hook()
-except Exception:
-    pass
+except Exception as ex:
+    logging.error("Erro ignorado: %s", ex, exc_info=True)
 # =================== FIM STATUSBAR GLOBAL ===================
 
 # --- FORÇA STATUSBAR NA JANELA PRINCIPAL (fallback) ---
@@ -513,13 +534,13 @@ def force_attach_statusbar(win):
         if bar is not None and hasattr(bar, 'winfo_exists') and bar.winfo_exists():
             try:
                 bar.pack_forget()
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             bar.pack(side='bottom', fill='x', pady=(0, 4))
             try:
                 bar.lift()
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             return
         # Caso não exista, cria igual ao hook, porém com altura/relief para ficar visível
         bar = tk.Frame(win, bd=1, relief='groove')
@@ -559,30 +580,46 @@ def force_attach_statusbar(win):
                 if fg:
                     lbl_left.configure(fg=fg)
                     lbl_clock.configure(fg=fg)
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     except Exception:
         return
 # --- FIM FORÇA STATUSBAR ---
 
 
 # ===================== CONFIGURAÇÕES =====================
-DISABLE_AUTO_UPDATE = (
-    False # <-- Evita que a atualização automática sobrescreva este patch
-)
-APP_VERSION = "5.2"
-OWNER = "andremariano07"
-REPO = "besim_company"
-BRANCH = "main"
-VERSION_FILE = "VERSION"
-DB_PATH = "besim_company.db"
-IGNORE_FILES = {"besim_company.db"}
-IGNORE_DIRS = {"cupons", "relatorios", "OS", "__pycache__", ".git"}
-# Caminho base para backups (Google Drive).
-# NÃO altera a lógica de backup existente; apenas define o caminho caso não exista.
-# Você pode definir via variável de ambiente GOOGLE_DRIVE_BACKUP.
-# Caso não definido, será usado um diretório local dentro da pasta do app.
-GOOGLE_DRIVE_BACKUP = os.getenv("GOOGLE_DRIVE_BACKUP") or os.path.join(os.getcwd(), "google_drive_backup")
+# Centralizadas em uma classe (sem dividir o projeto em arquivos).
+class CFG:
+    # Controle de update
+    DISABLE_AUTO_UPDATE = False  # Evita que a atualização automática sobrescreva este patch
+
+    # Versão / repositório
+    APP_VERSION = "5.6"
+    OWNER = "andremariano07"
+    REPO = "besim_company"
+    BRANCH = "main"
+    VERSION_FILE = "VERSION"
+
+    # Banco / arquivos
+    DB_PATH = "besim_company.db"
+    IGNORE_FILES = {"besim_company.db"}
+    IGNORE_DIRS = {"cupons", "relatorios", "OS", "__pycache__", ".git"}
+
+    # Backups (Google Drive). Pode definir via variável de ambiente GOOGLE_DRIVE_BACKUP.
+    # Se não definido, usa um diretório local dentro da pasta do app.
+    GOOGLE_DRIVE_BACKUP = os.getenv("GOOGLE_DRIVE_BACKUP") or os.path.join(os.getcwd(), "google_drive_backup")
+
+# Aliases para manter compatibilidade com o resto do código (sem refatorar tudo de uma vez).
+DISABLE_AUTO_UPDATE = CFG.DISABLE_AUTO_UPDATE
+APP_VERSION = CFG.APP_VERSION
+OWNER = CFG.OWNER
+REPO = CFG.REPO
+BRANCH = CFG.BRANCH
+VERSION_FILE = CFG.VERSION_FILE
+DB_PATH = CFG.DB_PATH
+IGNORE_FILES = CFG.IGNORE_FILES
+IGNORE_DIRS = CFG.IGNORE_DIRS
+GOOGLE_DRIVE_BACKUP = CFG.GOOGLE_DRIVE_BACKUP
 
 # ===================== LOG =====================
 LOG_FILE = "sistema_loja_errors.log"
@@ -684,10 +721,8 @@ def telegram_notify(text: str, dedupe_key: str = None, dedupe_window_sec: int = 
                 logging.error('Erro ao enviar Telegram: %s', ex)
 
         threading.Thread(target=_send, daemon=True).start()
-    except Exception:
-        pass
-
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
 def telegram_send_pdf(caption: str, file_path: str, dedupe_key: str = None, dedupe_window_sec: int = 30):
     """Envia PDF para o Telegram (opcional)."""
     try:
@@ -746,9 +781,8 @@ def telegram_send_pdf(caption: str, file_path: str, dedupe_key: str = None, dedu
                 logging.error('Erro ao enviar PDF no Telegram: %s', ex)
 
         threading.Thread(target=_send_doc, daemon=True).start()
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
 # =================== FIM TELEGRAM NOTIFY ===================
 
 # ===================== AGENDAMENTO: NOTIFICAÇÃO (hoje ao abrir) =====================
@@ -759,8 +793,8 @@ def _meta_get(key: str, default: str = "") -> str:
         r = cursor.fetchone()
         if r and r[0] is not None:
             return str(r[0])
-    except Exception:
-        pass
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     return default
 
 
@@ -772,10 +806,8 @@ def _meta_set(key: str, value: str):
                 "INSERT OR REPLACE INTO app_meta(key,value) VALUES(?,?)",
                 (key, str(value)),
             )
-    except Exception:
-        pass
-
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
 def notify_agendamentos_hoje_once():
     """Se houver agendamento para HOJE, envia Telegram uma vez por dia (ao abrir o sistema)."""
     try:
@@ -808,10 +840,8 @@ def notify_agendamentos_hoje_once():
         )
 
         _meta_set(meta_key, "1")
-    except Exception:
-        pass
-
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
 def start_agendamento_notify_on_open(root_widget):
     """Agenda a checagem para alguns segundos após abrir o sistema."""
     try:
@@ -867,10 +897,8 @@ def notify_devedores_hoje_once():
             dedupe_window_sec=120,
         )
         _meta_set(meta_key, "1")
-    except Exception:
-        pass
-
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
 def start_devedores_notify_on_open(root_widget):
     """Agenda a checagem de devedores (HOJE) alguns segundos após abrir e depois periodicamente."""
     def _tick():
@@ -880,24 +908,38 @@ def start_devedores_notify_on_open(root_widget):
             try:
                 # Revalida a cada 60 minutos para cobrir virada do dia com o app aberto
                 root_widget.after(60 * 60 * 1000, _tick)
-            except Exception:
-                pass
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
     try:
         root_widget.after(3200, _tick)
     except Exception:
         try:
             _tick()
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
 # ===================== FIM AGENDAMENTO: DEVEDORES =====================
 # ===================== FIM AGENDAMENTO: NOTIFICAÇÃO =====================
 
 
 # ===================== BANCO =====================
-conn = sqlite3.connect(DB_PATH)
-cursor = conn.cursor()
+# ===================== DB WRAPPER (reduz globais) =====================
+class DB:
+    """Wrapper simples para SQLite.
+    Mantém `conn` e `cursor` disponíveis por compatibilidade, mas centraliza criação e transações.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    @staticmethod
+    def tx():
+        """Context manager de transação."""
+        return DB.conn
+
+# Aliases antigos (compatibilidade)
+conn = DB.conn
+cursor = DB.cursor
+
+# ===================== FIM DB WRAPPER =====================
 
 # >>> NOVO: garante tabela CLIENTES (evita erro: no such table: clientes)
 def ensure_clientes_table_and_columns():
@@ -918,9 +960,8 @@ def ensure_clientes_table_and_columns():
     except Exception:
         try:
             conn.commit()
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
 ensure_clientes_table_and_columns()
 # <<< FIM NOVO: CLIENTES
 
@@ -1092,7 +1133,62 @@ CREATE TABLE IF NOT EXISTS vendas (
 # <<< FIM NOVO: Pontuação
 # ====== UTIL: hash de senha / migrações ======
 def hash_password(pw: str) -> str:
-    return hashlib.sha256(pw.encode("utf-8")).hexdigest()
+    """Gera hash seguro (PBKDF2) com salt.
+    Formato armazenado: pbkdf2$<iter>$<salt_b64>$<dk_b64>
+    """
+    pw_b = (pw or "").encode("utf-8")
+    iterations = 120_000
+    salt = secrets.token_bytes(16)
+    dk = hashlib.pbkdf2_hmac("sha256", pw_b, salt, iterations)
+    return "pbkdf2$%d$%s$%s" % (
+        iterations,
+        base64.b64encode(salt).decode("ascii"),
+        base64.b64encode(dk).decode("ascii"),
+    )
+
+def verify_password(pw_plain: str, stored_hash: str) -> bool:
+    """Verifica senha contra hash armazenado.
+    Suporta:
+    - novo formato pbkdf2$...
+    - legado: sha256 hex (64 chars) gerado por versões antigas
+    """
+    try:
+        stored = (stored_hash or "").strip()
+        if stored.startswith("pbkdf2$"):
+            parts = stored.split("$")
+            if len(parts) != 4:
+                return False
+            iterations = int(parts[1])
+            salt = base64.b64decode(parts[2].encode("ascii"))
+            dk_expected = base64.b64decode(parts[3].encode("ascii"))
+            dk = hashlib.pbkdf2_hmac("sha256", (pw_plain or "").encode("utf-8"), salt, iterations)
+            return hmac.compare_digest(dk, dk_expected)
+
+        # legado sha256 (versões antigas)
+        if re.fullmatch(r"[0-9a-fA-F]{64}", stored):
+            legacy = hashlib.sha256((pw_plain or "").encode("utf-8")).hexdigest()
+            return hmac.compare_digest(legacy.lower(), stored.lower())
+
+        return False
+    except Exception:
+        return False
+
+def maybe_upgrade_password_hash(username: str, pw_plain: str, stored_hash: str):
+    """Se o hash for legado e a senha estiver correta, atualiza para PBKDF2."""
+    try:
+        stored = (stored_hash or "").strip()
+        if not stored or stored.startswith("pbkdf2$"):
+            return
+        if re.fullmatch(r"[0-9a-fA-F]{64}", stored) and verify_password(pw_plain, stored):
+            new_hash = hash_password(pw_plain)
+            with conn:
+                cursor.execute(
+                    "UPDATE users SET password_hash=? WHERE username=?",
+                    (new_hash, username),
+                )
+    except Exception as ex:
+        log_exc("Falha ao atualizar hash de senha", ex)
+
 def ensure_is_admin_column():
     try:
         cursor.execute("PRAGMA table_info(users)")
@@ -1100,8 +1196,8 @@ def ensure_is_admin_column():
         if "is_admin" not in cols:
             cursor.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0")
             conn.commit()
-    except Exception:
-        pass
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
 ensure_is_admin_column()
 
 # >>> NOVO: força troca de senha no primeiro login
@@ -1112,9 +1208,8 @@ def ensure_force_password_change_column():
         if "force_password_change" not in cols:
             cursor.execute("ALTER TABLE users ADD COLUMN force_password_change INTEGER DEFAULT 0")
             conn.commit()
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
 ensure_force_password_change_column()
 
 # >>> NOVO: força troca de senha para TODOS os usuários UMA ÚNICA VEZ (primeira execução desta versão)
@@ -1129,9 +1224,8 @@ def run_force_password_change_migration_once():
         cursor.execute("UPDATE users SET force_password_change=1")
         cursor.execute("INSERT OR REPLACE INTO app_meta(key,value) VALUES(?,?)", ('forced_pw_change_v1','1'))
         conn.commit()
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
 run_force_password_change_migration_once()
 
 
@@ -1139,7 +1233,7 @@ def ensure_admin_user():
     try:
         cursor.execute("SELECT username, is_admin, COALESCE(password_last_changed,'') FROM users WHERE username=?", ("admin",))
         r = cursor.fetchone()
-        today = datetime.datetime.now().strftime("%d/%m/%Y")
+        today = today_br()
         if not r:
             admin_hash = hash_password("admin1234")
             cursor.execute(
@@ -1163,9 +1257,8 @@ def ensure_admin_user():
                     ("admin", cur_hash, today)
                 )
             conn.commit()
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
 ensure_admin_user()
 
 # >>> NOVO: migração segura das colunas hora/motivo da tabela caixa (para bancos existentes)
@@ -1182,8 +1275,8 @@ def ensure_caixa_columns():
             altered = True
         if altered:
             conn.commit()
-    except Exception:
-        pass
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
 ensure_caixa_columns()
 
 
@@ -1245,7 +1338,7 @@ def set_pontos_cliente(cpf: str, pontos: int):
     except Exception:
         pts = 0
     pts = max(0, pts)
-    agora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    agora = now_br()
     with conn:
         cursor.execute(
             "INSERT OR REPLACE INTO pontuacao(cpf,pontos,atualizado_em) VALUES(?,?,?)",
@@ -1281,7 +1374,7 @@ def registrar_resgate_pontos(cpf: str, item: str) -> tuple:
         return False, f"Pontos insuficientes. Saldo: {saldo} pts. Necessário: {custo} pts.", saldo
 
     novo = max(0, saldo - custo)
-    data = datetime.datetime.now().strftime("%d/%m/%Y")
+    data = today_br()
     hora = datetime.datetime.now().strftime("%H:%M:%S")
     with conn:
         set_pontos_cliente(cpf, novo)
@@ -1311,9 +1404,8 @@ def run_pontos_migration_once():
             set_pontos_cliente(cpf, _pontos_de_valor(float(soma or 0.0)))
         cursor.execute("INSERT OR REPLACE INTO app_meta(key,value) VALUES(?,?)", ('pontos_migracao_v1','1'))
         conn.commit()
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
 # Executa migração inicial de pontos (apenas 1 vez)
 run_pontos_migration_once()
 
@@ -1378,7 +1470,7 @@ def set_new_password(username: str, new_plain: str):
     if password_reuse_forbidden(username, new_hash, 3):
         raise ValueError("A nova senha não pode repetir nenhuma das últimas 3 senhas.")
 
-    today = datetime.datetime.now().strftime("%d/%m/%Y")
+    today = today_br()
     with conn:
         cursor.execute(
             "UPDATE users SET password_hash=?, password_last_changed=?, force_password_change=0 WHERE username=?",
@@ -1403,7 +1495,7 @@ def create_user_admin(current_user: str, new_username: str, new_password_plain: 
     if not ok:
         raise ValueError(msg)
     new_hash = hash_password(new_password_plain)
-    today = datetime.datetime.now().strftime("%d/%m/%Y")
+    today = today_br()
     with conn:
         cursor.execute(
             "INSERT INTO users (username, password_hash, is_admin, password_last_changed, force_password_change) VALUES (?,?,?,?,1)",
@@ -1436,7 +1528,7 @@ def _today_date():
     return datetime.date.today()
 
 def _now_iso():
-    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return now_iso()
 
 def _add_days_iso(days: int):
     return (_today_date() + datetime.timedelta(days=int(days))).strftime("%Y-%m-%d")
@@ -1548,12 +1640,12 @@ def bind_licenca_statusbar_auto_update(root_widget, label_widget, interval_ms=60
     def _tick():
         try:
             label_widget.config(text=get_tempo_restante_licenca_str())
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         try:
             root_widget.after(int(interval_ms), _tick)
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     _tick()
 
 def mostrar_dialogo_licenca(master=None):
@@ -1562,9 +1654,8 @@ def mostrar_dialogo_licenca(master=None):
         ok, _msg = licenca_valida_local()
         if ok:
             return True
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     # Evita conflito de múltiplos Tk(): cria root temporário e destrói no fim.
     tmp_root = None
     try:
@@ -1608,16 +1699,14 @@ def mostrar_dialogo_licenca(master=None):
         result["ok"] = True
         try:
             win.destroy()
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     def _sair():
         result["ok"] = False
         try:
             win.destroy()
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     btns = ttk.Frame(frm)
     btns.pack(fill="x", pady=14)
     ttk.Button(btns, text="Sair", style="Secondary.TButton", command=_sair).pack(side="right", padx=6)
@@ -1630,15 +1719,13 @@ def mostrar_dialogo_licenca(master=None):
         win.grab_set()
         win.focus_force()
         win.wait_window()
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     try:
         if tmp_root is not None:
             tmp_root.destroy()
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     return result["ok"]
 
 
@@ -1797,8 +1884,8 @@ def admin_gerar_enviar_licenca_dialog(master):
             if ok:
                 try:
                     win.clipboard_clear(); win.clipboard_append(chave)
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
                 lbl_out.config(text=f"Chave enviada! Válida até {exp} (fim do dia). (Chave copiada)")
                 messagebox.showinfo("Licença", f"""Chave enviada para {email}.
 Válida até {exp} (fim do dia).
@@ -1816,8 +1903,8 @@ Chave: {chave}""")
         try:
             win.transient(master)
             win.grab_set()
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     except Exception as ex:
         logging.error(f"Erro ao abrir diálogo de licença admin: {ex}")
 # ===================== EXCEPTIONS TK (assinatura corrigida) =====================
@@ -1829,8 +1916,8 @@ def setup_global_exception_handlers(tk_root: tk.Misc):
         try:
             msg = f"Ocorreu um erro inesperado:\n{exc_value}\n\nDetalhes foram gravados em: {LOG_FILE}"
             messagebox.showerror("Erro inesperado", msg)
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     sys.excepthook = excepthook
     # Assinatura correta para Tkinter: (exc, val, tb)
     def tk_callback_exception(exc, val, tb):
@@ -1838,12 +1925,12 @@ def setup_global_exception_handlers(tk_root: tk.Misc):
         try:
             msg = f"Ocorreu um erro na interface:\n{val}\n\nDetalhes foram gravados em: {LOG_FILE}"
             messagebox.showerror("Erro na interface", msg)
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     try:
         tk_root.report_callback_exception = tk_callback_exception
-    except Exception:
-        pass
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
 # ===================== FOCO PÓS-PDF =====================
 def bring_app_to_front():
     """Recoloca a janela do app na frente após abrir viewer externo."""
@@ -1855,13 +1942,10 @@ def bring_app_to_front():
             try:
                 root.attributes("-topmost", True)
                 root.after(200, lambda: root.attributes("-topmost", False))
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
 # ===================== FERRAMENTA: ABRIR 3uTools (Windows) =====================
 def abrir_3utools(parent=None):
     """Abre o 3uTools diretamente pelo executável no Windows."""
@@ -1941,9 +2025,8 @@ def montar_aba_ferramentas(abas: ttk.Notebook, root_win):
 
     try:
         ttk.Label(aba_ferramentas, text='Atalhos rápidos', font=('Segoe UI', 12, 'bold')).grid(row=0, column=0, columnspan=4, sticky='w', pady=(0, 12))
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     programas = [
         {'nome': '3uTools', 'iniciais': '3U', 'cor': '#2563eb', 'caminhos': [
             r'C:\\Program Files (x86)\\3uToolsV3\\x86\\3uToolsV3.exe',
@@ -1962,9 +2045,8 @@ def montar_aba_ferramentas(abas: ttk.Notebook, root_win):
     for c in range(cols):
         try:
             aba_ferramentas.columnconfigure(c, weight=1)
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     aba_ferramentas._tool_icons = []
     for idx, p in enumerate(programas):
         r = 1 + (idx // cols)
@@ -1983,8 +2065,8 @@ def montar_aba_ferramentas(abas: ttk.Notebook, root_win):
         btn.grid(row=r, column=c, padx=12, pady=12, sticky='nsew')
         try:
             add_tooltip(btn, 'Abrir ' + str(p.get('nome','Programa')))
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     return aba_ferramentas
 
 # ===================== FIM FERRAMENTAS =====================
@@ -1997,14 +2079,14 @@ def _resolve_toast_base(parent=None):
     try:
         if parent is not None and hasattr(parent, 'winfo_exists') and parent.winfo_exists():
             return parent
-    except Exception:
-        pass
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     try:
         base = _ACTIVE_TOAST_ROOT
         if base is not None and hasattr(base, 'winfo_exists') and base.winfo_exists():
             return base
-    except Exception:
-        pass
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     try:
         base = getattr(tk, '_default_root', None)
         if base is None or not hasattr(base, 'winfo_exists') or not base.winfo_exists():
@@ -2016,10 +2098,10 @@ def _resolve_toast_base(parent=None):
                     try:
                         if isinstance(w, tk.Toplevel) and w.winfo_exists() and str(w.state()) != 'withdrawn':
                             return w
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+                    except Exception as ex:
+                        logging.error("Erro ignorado: %s", ex, exc_info=True)
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         return base
     except Exception:
         return None
@@ -2082,12 +2164,10 @@ def _reposition_toasts(base, anchor='top-right', margin=16, gap=10):
                     x = rx + rw - w - margin
                 win.geometry(f'+{x}+{y}')
                 y += h + gap
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
 def show_toast(root: tk.Misc = None, text: str = '', level: str = 'info', duration_ms: int = 3500,
                anchor: str = 'top-right', max_stack: int = 4):
     """Mostra uma notificação tipo toast (não bloqueia a UI) — empilhado (2–4)."""
@@ -2107,9 +2187,8 @@ def show_toast(root: tk.Misc = None, text: str = '', level: str = 'info', durati
                 old = stack.pop(0)
                 if old and old.winfo_exists():
                     old.destroy()
-            except Exception:
-                pass
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
         bg, fg, bar = _get_toast_colors(level)
         icon = _toast_icon(level)
 
@@ -2117,13 +2196,12 @@ def show_toast(root: tk.Misc = None, text: str = '', level: str = 'info', durati
         win.overrideredirect(True)
         try:
             win.attributes('-topmost', True)
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         try:
             win.attributes('-alpha', 0.0)
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         shadow = tk.Frame(win, bg="#000000", bd=0, highlightthickness=0)
         shadow.pack(fill='both', expand=True)
         outer = tk.Frame(shadow, bg=bg, bd=0, highlightthickness=1, highlightbackground="#3a3a3a")
@@ -2160,15 +2238,14 @@ def show_toast(root: tk.Misc = None, text: str = '', level: str = 'info', durati
                 a = min(1.0, (step + 1) / 10)
                 try:
                     win.attributes('-alpha', a)
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
                 yy = int(start_y + (ty - start_y) * a)
                 win.geometry(f'+{tx}+{yy}')
                 if step < 9:
                     win.after(18, lambda: _anim_in(step + 1))
-            except Exception:
-                pass
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
         _anim_in(0)
 
         def _close():
@@ -2177,34 +2254,31 @@ def show_toast(root: tk.Misc = None, text: str = '', level: str = 'info', durati
                     a = max(0.0, 1.0 - (step + 1) / 10)
                     try:
                         win.attributes('-alpha', a)
-                    except Exception:
-                        pass
+                    except Exception as ex:
+                        logging.error("Erro ignorado: %s", ex, exc_info=True)
                     if step < 9:
                         win.after(18, lambda: _anim_out(step + 1))
                     else:
                         try:
                             if win.winfo_exists():
                                 win.destroy()
-                        except Exception:
-                            pass
+                        except Exception as ex:
+                            logging.error("Erro ignorado: %s", ex, exc_info=True)
                         try:
                             stack2 = getattr(base, '_toast_stack', []) or []
                             stack2 = [w for w in stack2 if w is not None and hasattr(w, 'winfo_exists') and w.winfo_exists()]
                             base._toast_stack = stack2
                             _reposition_toasts(base, anchor=anchor)
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-
+                        except Exception as ex:
+                            logging.error("Erro ignorado: %s", ex, exc_info=True)
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
             _anim_out(0)
 
         win.after(max(900, int(duration_ms)), _close)
 
-    except Exception:
-        pass
-
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
 # Monkey patch: transforma todos os messagebox.showinfo em toast (sem mudar chamadas)
 _ORIG_SHOWINFO = messagebox.showinfo
 
@@ -2213,8 +2287,8 @@ def _showinfo_toast(title, message, *args, **kwargs):
         parent = kwargs.get('parent')
         level = _toast_level_from_title(title)
         show_toast(parent, message, level=level, duration_ms=3500, anchor='top-right', max_stack=4)
-    except Exception:
-        pass
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     return 'ok'
 
 if USE_TOAST_FOR_INFO:
@@ -2248,8 +2322,8 @@ class ToolTip:
         try:
             if self._after_id:
                 self.widget.after_cancel(self._after_id)
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         self._after_id = None
 
     def _show(self):
@@ -2262,8 +2336,8 @@ class ToolTip:
             self.tip.overrideredirect(True)
             try:
                 self.tip.attributes('-topmost', True)
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             frm = tk.Frame(self.tip, bg='#111827', highlightbackground='#374151', highlightthickness=1)
             frm.pack()
             lbl = tk.Label(frm, text=self.text, bg='#111827', fg='#f9fafb', font=('Segoe UI', 9), justify='left')
@@ -2276,8 +2350,8 @@ class ToolTip:
         try:
             if self.tip and self.tip.winfo_exists():
                 self.tip.destroy()
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         self.tip = None
 
 def add_tooltip(widget, text: str):
@@ -2295,9 +2369,8 @@ def configure_zebra_tags(tree: ttk.Treeview, theme_name: str = 'dark'):
         odd = pal['panel'] if theme_name == 'dark' else pal['panel2']
         tree.tag_configure('even', background=even)
         tree.tag_configure('odd', background=odd)
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
 def apply_zebra(tree: ttk.Treeview):
     """Aplica zebra aos itens já inseridos (mantém outras tags)."""
     try:
@@ -2306,9 +2379,8 @@ def apply_zebra(tree: ttk.Treeview):
             tags = [t for t in tags if t not in ('even', 'odd')]
             tags.append('even' if i % 2 == 0 else 'odd')
             tree.item(iid, tags=tuple(tags))
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
 # ===================== SPLASH SCREEN (corrigida: primeiro plano garantido) =====================
 class SplashScreen(tk.Toplevel):
     def __init__(self, master):
@@ -2322,8 +2394,8 @@ class SplashScreen(tk.Toplevel):
             x = (self.winfo_screenwidth() // 2) - (520 // 2)
             y = (self.winfo_screenheight() // 2) - (300 // 2)
             self.geometry(f"+{x}+{y}")
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         # Garantir visibilidade (reforços)
         try:
             self.attributes("-topmost", True)
@@ -2332,8 +2404,8 @@ class SplashScreen(tk.Toplevel):
             self.after(10, self.lift)
             self.after(20, lambda: self.attributes("-topmost", True))
             self.after(30, self.focus_force)
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         frame = tk.Frame(self, bg="#1e1e1e")
         frame.pack(expand=True, fill="both")
         logo_path = str(P('logo.png'))
@@ -2381,16 +2453,14 @@ class SplashScreen(tk.Toplevel):
         self.progress["value"] = value
         try:
             self.update_idletasks()
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     def set_status(self, text):
         self.status.config(text=text)
         try:
             self.update_idletasks()
-        except Exception:
-            pass
-
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
 def show_goodbye_screen(master, message="Até Logo,\nBom descanso", duration_ms=1500):
     """Mostra uma tela rápida de despedida com logo (se existir) e mensagem."""
     try:
@@ -2411,9 +2481,8 @@ def show_goodbye_screen(master, message="Até Logo,\nBom descanso", duration_ms=
             win.attributes("-topmost", True)
             win.lift()
             win.focus_force()
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         frame = tk.Frame(win, bg="#1e1e1e")
         frame.pack(expand=True, fill="both")
 
@@ -2468,8 +2537,8 @@ def _runtime_app_dir() -> _Path:
     try:
         if getattr(sys, 'frozen', False):
             return _Path(sys.executable).resolve().parent
-    except Exception:
-        pass
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     try:
         return _Path(__file__).resolve().parent
     except Exception:
@@ -2481,18 +2550,17 @@ def _load_release_notes_text(max_chars: int = 14000) -> str:
     candidates = []
     try:
         candidates.append(_runtime_app_dir() / RELEASE_NOTES_FILE)
-    except Exception:
-        pass
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     try:
         candidates.append(_Path(os.getcwd()).resolve() / RELEASE_NOTES_FILE)
-    except Exception:
-        pass
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     # fallback: diretório base (PyInstaller _MEIPASS) — pode não conter o arquivo após update
     try:
         candidates.append(P(RELEASE_NOTES_FILE))
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     for p in candidates:
         try:
             p = str(p)
@@ -2540,9 +2608,8 @@ class ReleaseNotesWindow(tk.Toplevel):
         try:
             self.transient(master)
             self.grab_set()
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         # Centraliza
         try:
             self.update_idletasks()
@@ -2550,9 +2617,8 @@ class ReleaseNotesWindow(tk.Toplevel):
             x = (self.winfo_screenwidth() // 2) - (w // 2)
             y = (self.winfo_screenheight() // 2) - (h // 2)
             self.geometry(f"{w}x{h}+{x}+{y}")
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         # Canvas para fundo
         self.canvas = tk.Canvas(self, bg="#0f1115", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True)
@@ -2661,9 +2727,8 @@ class ReleaseNotesWindow(tk.Toplevel):
 
             self.canvas.coords(self._content_id, 0, 0)
             self.canvas.itemconfig(self._content_id, width=cw, height=ch)
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     def _on_resize(self, _evt=None):
         self._draw_background()
 
@@ -2671,16 +2736,16 @@ class ReleaseNotesWindow(tk.Toplevel):
         self._choice = 'continue'
         try:
             self.grab_release()
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         self.destroy()
 
     def _later(self):
         self._choice = 'later'
         try:
             self.grab_release()
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         self.destroy()
 
 
@@ -2700,55 +2765,50 @@ def show_release_notes(master, force: bool = False):
                 deferred = _meta_get('release_notes_deferred', '')
                 if str(last_shown) == str(version) or str(deferred) == str(version):
                     return
-            except Exception:
-                pass
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
         win = ReleaseNotesWindow(master, version, notes)
         try:
             master.wait_window(win)
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         choice = getattr(win, '_choice', None)
         if choice == 'continue':
             try:
                 _meta_set('release_notes_last_shown', str(version))
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
         elif choice == 'later':
             # "Ler depois": não mostra automaticamente nesta versão, mas fica disponível no menu.
             try:
                 _meta_set('release_notes_deferred', str(version))
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             # Mesmo em 'Ler depois', marcamos como exibido para não reaparecer automaticamente
             try:
                 _meta_set('release_notes_last_shown', str(version))
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
         else:
             # Fechou sem escolher (ex.: clicou no X) — marque como exibido
             try:
                 _meta_set('release_notes_last_shown', str(version))
-            except Exception:
-                pass
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
         # Em qualquer caso, suprime nesta sessão para não ficar mostrando toda hora
         _RELEASE_NOTES_SESSION_SUPPRESS.add(str(version))
 
     except Exception as ex:
         try:
             logging.error(f"Falha ao abrir novidades: {ex}", exc_info=True)
-        except Exception:
-            pass
-
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
 def maybe_show_release_notes(master):
     """Mostra automaticamente as novidades após abrir o sistema (uma vez por versão, com opção 'ler depois')."""
     try:
         show_release_notes(master, force=False)
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
 # ===================== FIM RELEASE NOTES =====================
 
 # ===================== UPDATE (após login, corrigido: sem loop) =====================
@@ -2819,8 +2879,8 @@ class UserAdminDialog(tk.Toplevel):
         try:
             self.transient(master)
             self.grab_set()
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         frm = ttk.Frame(self, padding=12)
         frm.pack(fill="both", expand=True)
         ttk.Label(frm, text="Novo usuário").grid(row=0, column=0, sticky="w")
@@ -2867,8 +2927,8 @@ def _bind_fullscreen_shortcuts(win: tk.Misc):
         except Exception:
             try:
                 win.state("zoomed" if win._is_fullscreen else "normal")
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
     def _exit_fullscreen(evt=None):
         try:
             win._is_fullscreen = False
@@ -2876,8 +2936,8 @@ def _bind_fullscreen_shortcuts(win: tk.Misc):
         except Exception:
             try:
                 win.state("normal")
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
     win.bind("<F11>", _toggle_fullscreen)
     win.bind("<Escape>", _exit_fullscreen)
 
@@ -2887,8 +2947,8 @@ def get_local_version() -> str:
         if os.path.exists(VERSION_FILE):
             with open(VERSION_FILE, "r", encoding="utf-8") as f:
                 return f.read().strip()
-    except Exception:
-        pass
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     return APP_VERSION
 def obter_versao_remota() -> str:
     url = f"https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/{VERSION_FILE}"
@@ -2941,15 +3001,15 @@ def baixar_e_extrair(splash: SplashScreen, remote_version: str):
         try:
             with open(VERSION_FILE, "w", encoding="utf-8") as vf:
                 vf.write(remote_version)
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         splash.set_status("Finalizando...")
         splash.set_progress(100)
     finally:
         try:
             shutil.rmtree(temp_dir, ignore_errors=True)
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
 def check_and_update_after_login(master: tk.Misc) -> bool:
     """Retorna True se atualizar (e reiniciar), False caso contrário."""
     if DISABLE_AUTO_UPDATE:
@@ -2968,13 +3028,13 @@ def check_and_update_after_login(master: tk.Misc) -> bool:
             master.withdraw()
             master.update_idletasks()
             master.update()
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         splash = SplashScreen(master)
         try:
             splash.update()
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         baixar_e_extrair(splash, remote_version)
         splash.set_status("Atualização concluída. Reiniciando...")
         # Reforçar visibilidade antes do reinício
@@ -2982,22 +3042,22 @@ def check_and_update_after_login(master: tk.Misc) -> bool:
             splash.lift()
             splash.focus_force()
             splash.update()
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         master.after(
             1200, lambda: os.execv(sys.executable, [sys.executable] + sys.argv)
         )
         try:
             splash.update()
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         return True
     except Exception as e:
         logging.error(f"Falha na atualização automática: {e}", exc_info=True)
         try:
             messagebox.showerror("Erro", "Falha na atualização automática")
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         return False
 # ================= FUNÇÕES PDF =================
 
@@ -3015,10 +3075,8 @@ def _pdf_draw_logo(c, x=40, y=740, w=260, h=90):
                 preserveAspectRatio=True,
                 mask="auto",
             )
-    except Exception:
-        pass
-
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
 def gerar_cupom(cliente, produto, qtd, pagamento, total, cpf=None):
     agora = datetime.datetime.now()
     pasta_cupons = os.path.join(os.getcwd(), "cupons")
@@ -3054,12 +3112,12 @@ def gerar_cupom(cliente, produto, qtd, pagamento, total, cpf=None):
     c.save()
     try:
         backup_pdf(nome_arquivo, "cupons")
-    except Exception:
-        pass
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     try:
         open_in_default_app(nome_arquivo)
-    except Exception:
-        pass
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     bring_app_to_front()
     return nome_arquivo
 
@@ -3093,17 +3151,17 @@ def gerar_os_pdf(os_num, nome, cpf, telefone, descricao, valor):
     c.save()
     try:
         backup_pdf(nome_arquivo, "OS")
-    except Exception:
-        pass
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     try:
         open_in_default_app(nome_arquivo)
-    except Exception:
-        pass
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     bring_app_to_front()
     return nome_arquivo
 # ================= RELATÓRIO VENDAS (PDF) =================
 def gerar_relatorio_vendas_dia_pdf(data_str: str = None, abrir_pdf: bool = True):
-    hoje = datetime.datetime.now().strftime("%d/%m/%Y")
+    hoje = today_br()
     data_alvo = data_str or hoje
     pasta_rel = os.path.join(os.getcwd(), "relatorios")
     os.makedirs(pasta_rel, exist_ok=True)
@@ -3279,9 +3337,8 @@ def gerar_relatorio_vendas_dia_pdf(data_str: str = None, abrir_pdf: bool = True)
             c.setFont("Helvetica", 11)
             c.drawString(40, 702, "-" * 110)
             y = 680
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     # -----------------------------------------------------------------------------
 
     # Saídas do dia
@@ -3344,12 +3401,12 @@ def gerar_relatorio_vendas_dia_pdf(data_str: str = None, abrir_pdf: bool = True)
     c.save()
     try:
         backup_pdf(nome_arquivo, "relatorios")
-    except Exception:
-        pass
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     try:
         open_in_default_app(nome_arquivo)
-    except Exception:
-        pass
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     bring_app_to_front()
     return nome_arquivo
 
@@ -3415,8 +3472,8 @@ def gerar_relatorio_vendas_mes_pdf(ano: int = None, mes: int = None, top_n: int 
         st = prod_stats.get(prod) or {"qtd": 0, "valor": 0.0}
         try:
             st["qtd"] += int(qtd_raw or 0)
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         st["valor"] += v
         prod_stats[prod] = st
 
@@ -3603,19 +3660,16 @@ def gerar_relatorio_vendas_mes_pdf(ano: int = None, mes: int = None, top_n: int 
     try:
         if chart_ok and os.path.exists(chart_path):
             os.remove(chart_path)
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     try:
         backup_pdf(nome_arquivo, "relatorios")
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     try:
         open_in_default_app(nome_arquivo)
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     bring_app_to_front()
     return nome_arquivo
 # ================= FORMATAÇÃO CPF/TELEFONE/MOEDA =================
@@ -3680,7 +3734,7 @@ def _dash_fmt_brl(valor: float) -> str:
 
 def calcular_totais_dia(data_str: str = None):
     """Retorna (vendas_dia, saidas_dia, liquido_dia) para a data informada (dd/mm/aaaa)."""
-    data_str = data_str or datetime.datetime.now().strftime("%d/%m/%Y")
+    data_str = data_str or today_br()
 
     try:
         cursor.execute("SELECT COALESCE(SUM(total),0) FROM vendas WHERE data=?", (data_str,))
@@ -3741,8 +3795,8 @@ def _dash_gerar_sparkline_img(valores, width: int = 260, height: int = 60):
         fig.savefig(buf, format="png", transparent=True)
         try:
             plt_mod.close(fig)
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         buf.seek(0)
         img = Image.open(buf)
         return ImageTk.PhotoImage(img)
@@ -3962,14 +4016,13 @@ def montar_aba_resumo_dashboard(abas: ttk.Notebook, conn: sqlite3.Connection, cu
         except Exception as ex:
             try:
                 logging.error(f"Falha ao atualizar dashboard: {ex}", exc_info=True)
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
         finally:
             try:
                 aba_resumo.after(60000, _refresh)
-            except Exception:
-                pass
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
     # atualiza ao abrir e também periodicamente
     _refresh()
 
@@ -3978,14 +4031,12 @@ def montar_aba_resumo_dashboard(abas: ttk.Notebook, conn: sqlite3.Connection, cu
         try:
             if abas.select() == aba_resumo._w:
                 _refresh()
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     try:
         abas.bind("<<NotebookTabChanged>>", _on_tab_changed, add=True)
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     return aba_resumo
 
 # ================= FIM DASHBOARD =================
@@ -4030,9 +4081,8 @@ def reorder_notebook_tabs_alphabetical(abas: 'ttk.Notebook'):
             for opt in ('text', 'image', 'compound', 'underline', 'sticky', 'state'):
                 try:
                     cfg[opt] = abas.tab(tid, opt)
-                except Exception:
-                    pass
-
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
             tab_info[tid] = {
                 'widget': w,
                 'cfg': cfg,
@@ -4043,9 +4093,8 @@ def reorder_notebook_tabs_alphabetical(abas: 'ttk.Notebook'):
         for tid in current_tabs:
             try:
                 abas.forget(tid)
-            except Exception:
-                pass
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
         used = set()
 
         def _add_tab(widget, cfg, fallback_text=''):
@@ -4059,9 +4108,8 @@ def reorder_notebook_tabs_alphabetical(abas: 'ttk.Notebook'):
             except Exception:
                 try:
                     abas.add(widget, text=fallback_text or '')
-                except Exception:
-                    pass
-
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
         # Re-adiciona na ordem desejada
         for label in desired:
             tid = next((t for t, info in tab_info.items() if str(info.get('text','')) == label), None)
@@ -4088,9 +4136,8 @@ def reorder_notebook_tabs_alphabetical(abas: 'ttk.Notebook'):
         try:
             if selected:
                 abas.select(selected)
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     except Exception:
         return
 # =================== FIM NOTEBOOK: ORDENAR ABAS ===================
@@ -4112,21 +4159,18 @@ def abrir_sistema_com_logo(username, login_win):
         updated = check_and_update_after_login(root)
         if updated:
             return  # app será reiniciado
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     # Mostra novidades da versão (uma vez por versão, com 'Ler depois')
     try:
         maybe_show_release_notes(root)
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     # 🔊 Som de boas-vindas ~200ms após a janela subir (não bloqueia a UI)
     try:
         root.after(200, lambda: tocar_som_agradavel(os.path.join("media", "welcome.wav")))
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     closing_state = {"mode": None}
 
     def on_close():
@@ -4134,8 +4178,8 @@ def abrir_sistema_com_logo(username, login_win):
         if closing_state.get("mode") == "logout":
             try:
                 root.destroy()
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             try:
                 if login_win and login_win.winfo_exists():
                     login_win.deiconify()
@@ -4145,8 +4189,8 @@ def abrir_sistema_com_logo(username, login_win):
                         login_win.ent_user.delete(0, "end")
                     if hasattr(login_win, "ent_pass"):
                         login_win.ent_pass.delete(0, "end")
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             closing_state["mode"] = None
             return
 
@@ -4154,24 +4198,22 @@ def abrir_sistema_com_logo(username, login_win):
         if messagebox.askyesno("Sair", "Tem certeza que deseja encerrar o sistema?"):
             try:
                 show_goodbye_screen(root, "Até Logo,\nBom descanso", duration_ms=1500)
-            except Exception:
-                pass
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             def _finalizar_saida():
                 try:
                     if login_win and login_win.winfo_exists():
                         login_win.destroy()
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
                 try:
                     root.destroy()
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
                 try:
                     conn.close()
-                except Exception:
-                    pass
-
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
             root.after(1600, _finalizar_saida)
             return
         return
@@ -4193,10 +4235,10 @@ def abrir_sistema_com_logo(username, login_win):
                 # Estoque: sem zebra (somente cores por quantidade)
                     configure_zebra_tags(t, current_theme["name"])
                     apply_zebra(t)
-            except Exception:
-                pass
-        except Exception:
-            pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     menu_tema.add_radiobutton(label="Escuro (Modern Dark)", variable=tema_var, value="dark", command=_on_theme_change)
     menu_tema.add_radiobutton(label="Claro (Windows 11)", variable=tema_var, value="light", command=_on_theme_change)
     menu_sessao.add_cascade(label="Tema", menu=menu_tema)
@@ -4208,9 +4250,8 @@ def abrir_sistema_com_logo(username, login_win):
         except Exception as ex:
             try:
                 messagebox.showerror('Atualização', f'Falha ao abrir atualizações:\n{ex}')
-            except Exception:
-                pass
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
     menu_sessao.add_separator()
     menu_sessao.add_command(label='Atualizações / Melhorias…', command=abrir_atualizacoes)
     def do_logout():
@@ -4252,12 +4293,11 @@ def abrir_sistema_com_logo(username, login_win):
             try:
                 # [REMOVIDO] menu_sessao.add_command(label="Licença (Admin)…", command=lambda: admin_gerar_enviar_licenca_dialog(root))
                 pass
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
+        except Exception as ex:
 
-        except Exception:
-
-            pass
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     menu_sessao.add_command(label="Logout", accelerator="Ctrl+L", command=do_logout)
     menu_sessao.add_separator()
     menu_sessao.add_command(label="Sair", accelerator="Ctrl+Q", command=do_quit)
@@ -4268,8 +4308,8 @@ def abrir_sistema_com_logo(username, login_win):
     menu_atualizacao.add_command(label='Ver novidades / melhorias…', command=abrir_atualizacoes)
     try:
         menu_atualizacao.add_command(label='Abrir RELEASE_NOTES.txt', command=lambda: open_in_default_app(str(_runtime_app_dir() / RELEASE_NOTES_FILE)))
-    except Exception:
-        pass
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     menu_bar.add_cascade(label='Atualização', menu=menu_atualizacao)
     root.config(menu=menu_bar)
     root.bind_all("<Control-l>", lambda e: do_logout())
@@ -4278,8 +4318,8 @@ def abrir_sistema_com_logo(username, login_win):
     style = ttk.Style()
     try:
         style.theme_use("clam")
-    except Exception:
-        pass
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     default_font = ("Segoe UI", 10)
     heading_font = ("Segoe UI", 11, "bold")
     style.configure(".", font=default_font)
@@ -4316,8 +4356,8 @@ def abrir_sistema_com_logo(username, login_win):
         style.configure('Treeview.Heading', font=HEADING_FONT)
         try:
             style.configure('Treeview.Heading', background=palette['panel2'], foreground=palette['text'])
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         style.configure('Treeview', rowheight=28, font=BASE_FONT)
         style.configure('Treeview',
                         background=palette['bg'],
@@ -4332,13 +4372,13 @@ def abrir_sistema_com_logo(username, login_win):
         if _HAS_SV_TTK and sv_ttk is not None:
             try:
                 sv_ttk.set_theme(theme_name)
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
         else:
             try:
                 style.theme_use('clam')
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
         current_theme['name'] = theme_name
         _apply_custom_styles(theme_name)
 
@@ -4381,9 +4421,8 @@ def abrir_sistema_com_logo(username, login_win):
             lbl_logo = tk.Label(h_left, image=log_img, bg=palette['panel'])
             lbl_logo.image = log_img
             lbl_logo.pack(side='left', padx=(10, 10), pady=8)
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     title_box = tk.Frame(h_left, bg=palette['panel'])
     title_box.pack(side='left', pady=8)
     tk.Label(title_box, text="BESIM COMPANY", bg=palette['panel'], fg=palette['text'],
@@ -4416,9 +4455,8 @@ def abrir_sistema_com_logo(username, login_win):
                 _theme_widgets[key].configure(bg=pal['panel'], highlightbackground=pal['border'])
             _theme_widgets['chip'].configure(bg=pal['panel2'], highlightbackground=pal['border'])
             _theme_widgets['lbl_chip'].configure(bg=pal['panel2'], fg=pal['text'])
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     # Notebook
     abas = ttk.Notebook(root)
 
@@ -4429,18 +4467,16 @@ def abrir_sistema_com_logo(username, login_win):
     except Exception:
         try:
             force_attach_statusbar(root)
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     # ====== RESUMO (Dashboard KPIs) ======
     try:
         montar_aba_resumo_dashboard(abas, conn, cursor)
     except Exception as _ex_dash:
         try:
             logging.error(f'Falha ao montar aba Resumo: {_ex_dash}', exc_info=True)
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     aba_estoque = ttk.Frame(abas, padding=10)
     aba_vendas = ttk.Frame(abas, padding=10)
     aba_clientes = ttk.Frame(abas, padding=10)
@@ -4467,9 +4503,8 @@ def abrir_sistema_com_logo(username, login_win):
                 carregar_vendas_dia()
             if abas.select() == aba_caixa._w:
                 atualizar_caixa()
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     abas.bind("<<NotebookTabChanged>>", _on_tab_changed)
 
     # ====== UPGRADE ======
@@ -4480,19 +4515,16 @@ def abrir_sistema_com_logo(username, login_win):
     # Reordena as abas em ordem alfabética (UI)
     try:
         reorder_notebook_tabs_alphabetical(abas)
-    except Exception:
-        pass
-
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     # Aba Ferramentas (atalhos com ícones)
     try:
         montar_aba_ferramentas(abas, root)
     except Exception as _ex_tools:
         try:
             logging.error(f'Falha ao montar aba Ferramentas: {_ex_tools}', exc_info=True)
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     f_u = ttk.Frame(aba_upgrade, padding=8)
     f_u.pack(fill="x", pady=6)
     ttk.Label(f_u, text="CPF").grid(row=0, column=0, sticky="w", padx=6, pady=4)
@@ -4537,7 +4569,7 @@ def abrir_sistema_com_logo(username, login_win):
                 messagebox.showwarning("Atenção", "Informe descrição e valor válido")
                 return
             valor = float(valor_text)
-            data = datetime.datetime.now().strftime("%d/%m/%Y")
+            data = today_br()
             hora = datetime.datetime.now().strftime("%H:%M:%S")
             with conn:
                 cursor.execute("INSERT INTO vendas(cliente,cpf,produto,quantidade,total,pagamento,data,hora) VALUES (?,?,?,?,?,?,?,?)", (cliente, cpf, descricao, 1, valor, (f"Upgrade - {ent_pg_u.get().strip()}" if ent_pg_u.get().strip() else "Upgrade"), data, hora))
@@ -4545,7 +4577,7 @@ def abrir_sistema_com_logo(username, login_win):
                 # >>> NOVO: soma pontos do cliente (Upgrade também soma pontos)
                 cursor.execute(
                     "INSERT OR IGNORE INTO pontuacao(cpf,pontos,atualizado_em) VALUES(?,?,?)",
-                    (cpf, 0, datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")),
+                    (cpf, 0, now_br()),
                 )
                 adicionar_pontos_cliente(cpf, valor)
                 # <<< FIM NOVO: pontos
@@ -4562,20 +4594,20 @@ def abrir_sistema_com_logo(username, login_win):
                 💳 {ent_pg_u.get().strip() or 'Upgrade'}
                 💰 Total: R$ {valor:.2f}
                 🕒 {data} {hora}""", dedupe_key=f"upgrade_{data}_{hora}_{cpf}", dedupe_window_sec=30)
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
                 try:
                     telegram_send_pdf("🧾 Cupom do upgrade", caminho_pdf, dedupe_key=f"cupom_upgrade_{data}_{hora}_{cpf}", dedupe_window_sec=60)
-                except Exception:
-                    pass
-            except Exception:
-                pass
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             messagebox.showinfo("Upgrade", f"Upgrade registrado! Total: R$ {valor:.2f}")
             # Atualiza também a lista de vendas do dia (upgrades geram venda)
             try:
                 aba_vendas.after(30, carregar_vendas_dia)
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             carregar_upgrades()
             ent_cpf_u.delete(0, "end")
             ent_nome_u.delete(0, "end")
@@ -4605,7 +4637,7 @@ def abrir_sistema_com_logo(username, login_win):
     scrollbar_upgrades.pack(side="right", fill="y")
     # ====== FUNÇÃO PARA GERAR RELATÓRIO DE UPGRADES EM PDF ======
     def gerar_relatorio_upgrades_dia_pdf(data_str: str = None):
-        hoje = datetime.datetime.now().strftime("%d/%m/%Y")
+        hoje = today_br()
         data_alvo = data_str or hoje
         pasta_rel = os.path.join(os.getcwd(), "relatorios")
         os.makedirs(pasta_rel, exist_ok=True)
@@ -4615,8 +4647,8 @@ def abrir_sistema_com_logo(username, login_win):
         if os.path.exists(logo_path_local):
             try:
                 c.drawImage(ImageReader(logo_path_local), 40, 780, width=140, height=40, preserveAspectRatio=True, mask="auto")
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
         c.setFont("Helvetica-Bold", 12)
         c.drawString(40, 720, f"Relatório de Upgrades - {data_alvo}")
         c.setFont("Helvetica", 11)
@@ -4665,12 +4697,12 @@ def abrir_sistema_com_logo(username, login_win):
         c.save()
         try:
             backup_pdf(nome_arquivo, "relatorios")
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         try:
             open_in_default_app(nome_arquivo)
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         bring_app_to_front()
         return nome_arquivo
     # Adiciona botão na aba Upgrade
@@ -4678,7 +4710,7 @@ def abrir_sistema_com_logo(username, login_win):
     @ui_safe('Upgrade')
     def carregar_upgrades():
         tree_upgrades.delete(*tree_upgrades.get_children())
-        hoje = datetime.datetime.now().strftime("%d/%m/%Y")
+        hoje = today_br()
         cursor.execute("SELECT hora, cliente, produto, pagamento, total FROM vendas WHERE data=? AND pagamento LIKE 'Upgrade%' ORDER BY hora DESC", (hoje,))
         for hora, cliente, produto, pagamento, total in cursor.fetchall():
             tree_upgrades.insert("", "end", values=(hora, cliente, produto, (pagamento or "").replace("Upgrade - ", ""), f"R$ {total:.2f}"))
@@ -4790,8 +4822,8 @@ def abrir_sistema_com_logo(username, login_win):
                 try:
                     dia = int(iso.split('-')[2])
                     resp[dia] = r or ""
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
         except Exception as ex:
             logging.error(f"Falha ao carregar agendamentos: {ex}", exc_info=True)
         return resp
@@ -4830,9 +4862,8 @@ def abrir_sistema_com_logo(username, login_win):
             rr = cursor.fetchone()
             if rr and rr[0]:
                 atual = rr[0]
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         # --- Janela multilinha (substitui simpledialog.askstring) ---
         win = tk.Toplevel(root)
         win.title("Agendamento - Retirada de Celulares")
@@ -4840,9 +4871,8 @@ def abrir_sistema_com_logo(username, login_win):
         try:
             win.transient(root)
             win.grab_set()
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         # Centraliza
         try:
             win.update_idletasks()
@@ -4883,7 +4913,7 @@ def abrir_sistema_com_logo(username, login_win):
             try:
                 with conn:
                     if texto:
-                        agora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                        agora = now_br()
                         cursor.execute(
                             "INSERT INTO agendamentos_celulares(data_iso, responsavel, atualizado_em) VALUES (?,?,?) "
                             "ON CONFLICT(data_iso) DO UPDATE SET responsavel=excluded.responsavel, atualizado_em=excluded.atualizado_em",
@@ -4898,17 +4928,15 @@ def abrir_sistema_com_logo(username, login_win):
 
             try:
                 win.destroy()
-            except Exception:
-                pass
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             refresh_agendamento_calendar()
 
         def _cancelar():
             try:
                 win.destroy()
-            except Exception:
-                pass
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
         ttk.Button(btns, text="Cancelar", style="Secondary.TButton", command=_cancelar).pack(side="right", padx=6)
         ttk.Button(btns, text="Salvar", style="Success.TButton", command=_salvar).pack(side="right", padx=6)
 
@@ -4929,9 +4957,8 @@ def abrir_sistema_com_logo(username, login_win):
         for w in ag_days_container.winfo_children():
             try:
                 w.destroy()
-            except Exception:
-                pass
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
         # Carrega agendamentos do mês
         ag_map = _load_agendamentos_do_mes(year, month)
 
@@ -5109,8 +5136,8 @@ def abrir_sistema_com_logo(username, login_win):
                     telegram_notify(f"""⚠️ <b>ESTOQUE BAIXO</b>
             📦 Produto: {nome}
             🔢 Qtd: {qtd}""", dedupe_key=f"stock_low_{codigo}", dedupe_window_sec=int(cfg_tg.get('dedupe_low_sec', 21600)))
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             tree.insert("", "end", values=(codigo, nome, tipo, f"R$ {float(preco):.2f}", int(qtd)), tags=(tag,))
         
         # NÃO aplicar zebra no estoque
@@ -5302,20 +5329,20 @@ def abrir_sistema_com_logo(username, login_win):
                 # migração CPF nas tabelas relacionadas
                 try:
                     cursor.execute("UPDATE vendas SET cpf=? WHERE cpf=?", (cpf, orig))
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
                 try:
                     cursor.execute("UPDATE manutencao SET cpf=? WHERE cpf=?", (cpf, orig))
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
                 try:
                     cursor.execute("UPDATE devedores SET cpf=? WHERE cpf=?", (cpf, orig))
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
                 try:
                     cursor.execute("UPDATE resgates_pontos SET cpf=? WHERE cpf=?", (cpf, orig))
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
                 # pontuacao (PK cpf) com merge
                 try:
                     cursor.execute("SELECT COALESCE(pontos,0) FROM pontuacao WHERE cpf=?", (orig,))
@@ -5329,24 +5356,24 @@ def abrir_sistema_com_logo(username, login_win):
                         cursor.execute("DELETE FROM pontuacao WHERE cpf=?", (orig,))
                     else:
                         cursor.execute("UPDATE pontuacao SET cpf=? WHERE cpf=?", (cpf, orig))
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
             else:
                 cursor.execute("INSERT OR REPLACE INTO clientes (cpf, nome, telefone) VALUES (?,?,?)", (cpf, nome, tel))
         carregar_clientes()
         # Limpa formulário após salvar
         try:
             e_cpf.config(state="normal")
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         e_cpf.delete(0, "end")
         e_nome.delete(0, "end")
         e_tel.delete(0, "end")
         original_cpf["value"] = None
         try:
             e_cpf.focus_set()
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     # -- BUSCA POR NOME (filtro incremental) --
     filtro_frame = ttk.Frame(aba_clientes, padding=8)
     filtro_frame.pack(fill="x")
@@ -5385,8 +5412,8 @@ def abrir_sistema_com_logo(username, login_win):
         original_cpf["value"] = cpf
         try:
             e_cpf.config(state="normal")
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     tree_cli.bind("<Double-1>", carregar_para_edicao)
     ttk.Button(form_cli, text="Salvar Cliente", command=salvar_cliente).grid(
         row=1, column=1, pady=8
@@ -5434,9 +5461,8 @@ def abrir_sistema_com_logo(username, login_win):
             try:
                 win.transient(root)
                 win.grab_set()
-            except Exception:
-                pass
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             header = ttk.Frame(win, padding=8)
             header.pack(fill="x")
             body = ttk.Frame(win, padding=(8, 0, 8, 8))
@@ -5467,12 +5493,12 @@ def abrir_sistema_com_logo(username, login_win):
                                 try:
                                     entry.delete(0, "end")
                                     entry.insert(0, f"{dd:02d}/{mm:02d}/{yy:04d}")
-                                except Exception:
-                                    pass
+                                except Exception as ex:
+                                    logging.error("Erro ignorado: %s", ex, exc_info=True)
                                 try:
                                     win.destroy()
-                                except Exception:
-                                    pass
+                                except Exception as ex:
+                                    logging.error("Erro ignorado: %s", ex, exc_info=True)
                             ttk.Button(body, text=str(day), width=4, command=_pick).grid(row=r, column=c, padx=2, pady=2)
 
             def _prev():
@@ -5495,9 +5521,8 @@ def abrir_sistema_com_logo(username, login_win):
             ttk.Button(header, text=">", width=3, command=_next).pack(side="right")
 
             _render()
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     def _on_click_data_dev(evt=None):
         _calendar_popup_for(ent_data_dev)
         return "break"
@@ -5528,9 +5553,8 @@ def abrir_sistema_com_logo(username, login_win):
             elif cur == "R$":
                 var_valor_dev.set("R$ ")
             ent_valor_dev.icursor("end")
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     def _format_valor_dev(evt=None):
         try:
             val = _parse_valor_br(var_valor_dev.get())
@@ -5538,9 +5562,8 @@ def abrir_sistema_com_logo(username, login_win):
                 var_valor_dev.set(_format_brl(val))
             else:
                 _ensure_prefix_valor_dev()
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     ent_valor_dev.bind("<FocusIn>", _ensure_prefix_valor_dev)
     ent_valor_dev.bind("<KeyRelease>", _ensure_prefix_valor_dev)
     ent_valor_dev.bind("<FocusOut>", _format_valor_dev)
@@ -5593,11 +5616,8 @@ def abrir_sistema_com_logo(username, login_win):
         except Exception:
             try:
                 ent_nome_dev.config(state="readonly")
-            except Exception:
-                pass
-
-
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
     # Debounce para buscar nome automaticamente após digitar CPF
     _dev_after = {"id": None}
 
@@ -5605,14 +5625,14 @@ def abrir_sistema_com_logo(username, login_win):
         # garante CPF formatado
         try:
             formatar_cpf(evt, ent_cpf_dev)
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         # cancela busca anterior enquanto o usuário digita
         try:
             if _dev_after.get("id"):
                 ent_cpf_dev.after_cancel(_dev_after["id"])
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         # agenda nova busca
         _dev_after["id"] = ent_cpf_dev.after(180, _buscar_nome_por_cpf_dev)
 
@@ -5649,9 +5669,8 @@ def abrir_sistema_com_logo(username, login_win):
 
     try:
         configure_zebra_tags(tree_devedores, 'dark')
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     def _parse_valor_br(s: str) -> float:
         s = (s or "").strip().replace("R$", "").replace(" ", "")
         if s.count(",") == 1 and s.count(".") >= 1:
@@ -5681,14 +5700,13 @@ def abrir_sistema_com_logo(username, login_win):
                 )
             try:
                 apply_zebra(tree_devedores)
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
         except Exception as ex:
             try:
                 logging.error(f"Falha ao carregar devedores: {ex}", exc_info=True)
-            except Exception:
-                pass
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
     def _limpar_form_dev():
         ent_cpf_dev.delete(0, "end")
         ent_data_dev.delete(0, "end")
@@ -5727,7 +5745,7 @@ def abrir_sistema_com_logo(username, login_win):
             messagebox.showwarning("Atenção", "Informe um valor maior que zero.")
             return
 
-        criado_em = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        criado_em = now_iso()
         with conn:
             cursor.execute(
                 """INSERT INTO devedores(cpf,nome,data_pagamento,data_iso,valor,pago,criado_em)
@@ -5747,7 +5765,7 @@ def abrir_sistema_com_logo(username, login_win):
         if not vals:
             return
         id_ = vals[0]
-        pago_em = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        pago_em = now_iso()
         with conn:
 
             # Marca como pago e lança no Caixa (entrada)
@@ -5980,8 +5998,8 @@ def abrir_sistema_com_logo(username, login_win):
 
     try:
         carregar_pontuacao()
-    except Exception:
-        pass
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
 # ====== VENDAS ======
     f_v = ttk.Frame(aba_vendas, padding=8)
     f_v.pack(fill="x", pady=6)
@@ -6109,7 +6127,7 @@ def abrir_sistema_com_logo(username, login_win):
                 total *= 0.95
             elif var_desc_10.get():
                 total *= 0.90
-            data = datetime.datetime.now().strftime("%d/%m/%Y")
+            data = today_br()
             hora = datetime.datetime.now().strftime("%H:%M:%S")
             with conn:
                 cursor.execute(
@@ -6120,7 +6138,7 @@ def abrir_sistema_com_logo(username, login_win):
                 # >>> NOVO: soma pontos do cliente (1 R$ = 1 ponto)
                 cursor.execute(
                     "INSERT OR IGNORE INTO pontuacao(cpf,pontos,atualizado_em) VALUES(?,?,?)",
-                    (cpf, 0, datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")),
+                    (cpf, 0, now_br()),
                 )
                 adicionar_pontos_cliente(cpf, total)
                 # <<< FIM NOVO: pontos
@@ -6179,9 +6197,8 @@ def abrir_sistema_com_logo(username, login_win):
             # Atualiza a lista de vendas do dia automaticamente
             try:
                 aba_vendas.after(30, carregar_vendas_dia)
-            except Exception:
-                pass
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             # Gerar cupom e enviar por e-mail, se marcado
             try:
                 caminho_pdf = gerar_cupom(cliente or "", nome_prod, qtd, pagamento or "", total, cpf=cpf)
@@ -6194,18 +6211,18 @@ def abrir_sistema_com_logo(username, login_win):
                 💳 Forma de Pagamento: {pagamento}
                 💰 Total: R$ {total:.2f}
                 🕒 {data} {hora}""", dedupe_key=f"venda_{data}_{hora}_{codigo}", dedupe_window_sec=15)
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
                 try:
                     telegram_send_pdf("🧾 Cupom da venda", caminho_pdf, dedupe_key=f"cupom_venda_{data}_{hora}_{codigo}", dedupe_window_sec=30)
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
                 # valida o caminho do PDF antes de enviar
                 if not caminho_pdf or not os.path.isfile(caminho_pdf):
                     try:
                         messagebox.showwarning("E-mail", "Cupom não foi gerado corretamente. O envio por e-mail foi pulado.")
-                    except Exception:
-                        pass
+                    except Exception as ex:
+                        logging.error("Erro ignorado: %s", ex, exc_info=True)
                     email_cliente = ""  # força pular envio
                 # Captura e-mail e tenta enviar
                 try:
@@ -6217,21 +6234,20 @@ def abrir_sistema_com_logo(username, login_win):
                     if not ok:
                         try:
                             messagebox.showwarning("E-mail", f"Falha ao enviar e-mail:\n{detail}")
-                        except Exception:
-                            pass
+                        except Exception as ex:
+                            logging.error("Erro ignorado: %s", ex, exc_info=True)
             except Exception as e:
                 logging.error(f"Falha ao gerar/enviar cupom: {e}", exc_info=True)
                 try:
                     messagebox.showerror("Cupom/E-mail", "Erro: " + str(e))
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
         except Exception as ex:
             logging.error("Falha ao finalizar venda", exc_info=True)
             try:
                 messagebox.showerror("Erro", f"Falha ao finalizar venda\n{ex}")
-            except Exception:
-                pass
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
     # --- Botões de ação da venda (recriados) ---
     acoes_venda = ttk.Frame(f_v)
     acoes_venda.grid(row=3, column=2, columnspan=4, padx=6, pady=8, sticky="e")
@@ -6250,17 +6266,16 @@ def abrir_sistema_com_logo(username, login_win):
             try:
                 w.config(state="normal")
                 w.delete(0, "end")
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
         ent_pg_v.set("")
         var_desc_5.set(0)
         var_desc_10.set(0)
         lbl_total_v.config(text="Total: R$ 0.00")
         try:
             ent_prod_v.config(state="readonly")
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     btn_limpar_venda = ttk.Button(
         acoes_venda,
         text="Limpar",
@@ -6380,9 +6395,8 @@ def abrir_sistema_com_logo(username, login_win):
                         "UPDATE produtos SET estoque = COALESCE(estoque,0) + ? WHERE nome=?",
                         (int(qtd), str(produto)),
                     )
-                except Exception:
-                    pass
-
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
                 # Estorna no caixa (lançamento negativo com motivo)
                 try:
                     cursor.execute(
@@ -6396,17 +6410,16 @@ def abrir_sistema_com_logo(username, login_win):
             # Atualiza telas
             try:
                 listar_estoque()
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             try:
                 carregar_vendas_dia()
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             try:
                 atualizar_caixa()
-            except Exception:
-                pass
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             messagebox.showinfo("OK", "Venda excluída e valor estornado do caixa.")
 
             try:
@@ -6418,9 +6431,8 @@ def abrir_sistema_com_logo(username, login_win):
             💰 Estorno: R$ {float(total):.2f}
             📅 Data: {data_v}
             🕒 Hora original: {hora_v}""", dedupe_key=f"estorno_{_id}", dedupe_window_sec=300)
-            except Exception:
-                pass
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
         except Exception as ex:
             logging.error("Falha ao excluir venda", exc_info=True)
             messagebox.showerror("Erro", f"Falha ao excluir venda\n{ex}")
@@ -6428,7 +6440,7 @@ def abrir_sistema_com_logo(username, login_win):
     @ui_safe('Vendas')
     def carregar_vendas_dia():
         tree_vendas.delete(*tree_vendas.get_children())
-        hoje = datetime.datetime.now().strftime("%d/%m/%Y")
+        hoje = today_br()
         filtro = (combo_filtro_pg.get() or "").strip()
 
         if filtro:
@@ -6467,9 +6479,8 @@ def abrir_sistema_com_logo(username, login_win):
     # Carrega vendas ao abrir a aba
     try:
         carregar_vendas_dia()
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
 # ====== CAIXA ======
     f_cx = ttk.Frame(aba_caixa, padding=8)
     f_cx.pack(fill="both", expand=True)
@@ -6510,7 +6521,7 @@ def abrir_sistema_com_logo(username, login_win):
             lbl_liquido_dia_cx.config(text=f"Líquido: {fmt(liquido_dia)}")
             # OS aprovadas do dia (somente aprovadas)
             try:
-                hoje = datetime.datetime.now().strftime("%d/%m/%Y")
+                hoje = today_br()
                 cursor.execute("SELECT COALESCE(SUM(valor),0), COUNT(1) FROM manutencao WHERE COALESCE(aprovado,0)=1 AND data=?", (hoje,))
                 _sum_os, _cnt_os = cursor.fetchone() or (0, 0)
                 _sum_os = float(_sum_os or 0.0)
@@ -6518,18 +6529,17 @@ def abrir_sistema_com_logo(username, login_win):
                 try:
                     if lbl_os_aprov_dia_cx is not None:
                         lbl_os_aprov_dia_cx.config(text=f"OS aprovadas: {fmt(_sum_os)} ({_cnt_os})")
-                except Exception:
-                    pass
-            except Exception:
-                pass
-        except Exception:
-            pass
-
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     # Atualiza ao abrir a aba (primeira renderização)
     try:
         atualizar_totais_ganho_dia_caixa()
-    except Exception:
-        pass
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     lbl_data_hora = ttk.Label(top_cx, text="", font=("Segoe UI", 10))
     lbl_data_hora.pack(side="right", padx=6)
     caixa_ops = ttk.Frame(f_cx)
@@ -6592,7 +6602,7 @@ def abrir_sistema_com_logo(username, login_win):
                 )
                 return
 
-            hoje = datetime.datetime.now().strftime("%d/%m/%Y")
+            hoje = today_br()
             hora = datetime.datetime.now().strftime("%H:%M:%S")
 
             with conn:
@@ -6650,7 +6660,7 @@ def abrir_sistema_com_logo(username, login_win):
             # Envio Telegram (opcional)
             if send_telegram:
                 try:
-                    agora_txt = datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+                    agora_txt = now_br()
                     telegram_notify(
                         f"""\U0001F4CA <b>RELATÓRIO MENSAL</b>
 \U0001F4C5 Mês: {m:02d}/{y:04d}
@@ -6658,9 +6668,8 @@ def abrir_sistema_com_logo(username, login_win):
                         dedupe_key=f"rel_mensal_msg_{y:04d}{m:02d}",
                         dedupe_window_sec=30,
                     )
-                except Exception:
-                    pass
-
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
                 try:
                     telegram_send_pdf(
                         f"\U0001F4CA Relatório mensal {m:02d}/{y:04d}",
@@ -6668,9 +6677,8 @@ def abrir_sistema_com_logo(username, login_win):
                         dedupe_key=f"rel_mensal_pdf_{y:04d}{m:02d}",
                         dedupe_window_sec=120,
                     )
-                except Exception:
-                    pass
-
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
             messagebox.showinfo(
                 'Relatório Mensal',
                 f'Relatório mensal {m:02d}/{y:04d} gerado com sucesso!\n\nArquivo: {pdf_path}',
@@ -6735,8 +6743,8 @@ def abrir_sistema_com_logo(username, login_win):
         # Atualiza os indicadores de ganho do dia (Vendas / Saídas / Líquido)
         try:
             atualizar_totais_ganho_dia_caixa()
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         # (Patch) Evita NameError/UnboundLocal para variáveis de PDF usadas no fechamento
         pdf_dia = None
         pdf_mes = None
@@ -6775,14 +6783,13 @@ def abrir_sistema_com_logo(username, login_win):
 📅 Data: {ultima_data}
 💰 Total do dia: R$ {float(total_ultimo)}:.2f
 📄 Relatórios gerados ✅""", dedupe_key=f"auto_fech_{ultima_data}", dedupe_window_sec=120)
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
                 try:
                     if pdf_dia:
                         telegram_send_pdf(f"📄 Relatório do dia {ultima_data}", pdf_dia, dedupe_key=f"auto_rel_dia_{ultima_data}", dedupe_window_sec=600)
-                except Exception:
-                    pass
-
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
             # 2.1) Se for o ÚLTIMO DIA do mês, gera também o relatório MENSAL (gráfico + ranking)
             pdf_mes = None
             try:
@@ -6797,17 +6804,16 @@ def abrir_sistema_com_logo(username, login_win):
             try:
                 if pdf_mes:
                     telegram_send_pdf(f"📊 Relatório mensal {hoje[-7:]}", pdf_mes, dedupe_key=f"rel_mes_{hoje[-7:]}", dedupe_window_sec=600)
-            except Exception:
-                pass
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             # 3) Backups automáticos (banco, cupons, OS, relatórios)
             try:
                 backup_banco()
                 backup_bulk_dir(os.path.join(os.getcwd(), "cupons"), "cupons")
                 backup_bulk_dir(os.path.join(os.getcwd(), "OS"), "OS")
                 backup_bulk_dir(os.path.join(os.getcwd(), "relatorios"), "relatorios")
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             # 4) Somente agora apagamos os lançamentos do dia do caixa
             with conn:
                 cursor.execute("DELETE FROM caixa WHERE data=?", (ultima_data,))
@@ -6851,33 +6857,33 @@ def abrir_sistema_com_logo(username, login_win):
                     d, mo, y = dmY
                     if d == calendar.monthrange(y, mo)[1]:
                         _ = gerar_relatorio_vendas_mes_pdf(y, mo, abrir_pdf=True)
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             # 3) Telegram / Backups (best-effort)
             try:
                 telegram_notify(f"🔒 CAIXA FECHADO\nData: {hoje}\nTotal: R$ {total_dia:.2f}", dedupe_key=f"fech_{hoje}", dedupe_window_sec=120)
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             try:
                 if pdf_path:
                     telegram_send_pdf(f"📄 Relatório do dia {hoje}", pdf_path, dedupe_key=f"rel_dia_{hoje}", dedupe_window_sec=600)
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             try:
                 backup_banco()
                 backup_bulk_dir(os.path.join(os.getcwd(), "cupons"), "cupons")
                 backup_bulk_dir(os.path.join(os.getcwd(), "OS"), "OS")
                 backup_bulk_dir(os.path.join(os.getcwd(), "relatorios"), "relatorios")
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             # 4) Limpa lançamentos do dia
             with conn:
                 cursor.execute("DELETE FROM caixa WHERE data=?", (hoje,))
             messagebox.showinfo("Fechar Caixa", f"Caixa do dia {hoje} fechado com sucesso!\nRelatório gerado:\n{pdf_path or '(sem relatório)'}")
             try:
                 carregar_historico_cx()
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             return pdf_path
         except Exception as ex:
             messagebox.showerror("Erro", f"Falha ao fechar caixa.\n\nDetalhes: {ex}")
@@ -6894,8 +6900,8 @@ def abrir_sistema_com_logo(username, login_win):
             anchor="e",
             justify="right"
         ).pack(side="right", padx=8, pady=4)
-    except Exception:
-        pass
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     # --- Fim do rodapé da aba Caixa ---
 
     # ====== MANUTENÇÃO ======
@@ -7003,7 +7009,7 @@ def abrir_sistema_com_logo(username, login_win):
         except ValueError:
             messagebox.showerror("Erro", "Valor inválido")
             return
-        data = datetime.datetime.now().strftime("%d/%m/%Y")
+        data = today_br()
         with conn:
             cursor.execute(
                 "INSERT INTO manutencao(cpf,nome,telefone,descricao,data,valor) VALUES (?,?,?,?,?,?)",
@@ -7022,8 +7028,8 @@ def abrir_sistema_com_logo(username, login_win):
         💰 Valor: R$ {valor:.2f}
         📅 🕒 {data} {datetime.datetime.now().strftime("%H:%M:%S")}""", dedupe_key=f"os_nova_{os_num}", dedupe_window_sec=120)
             telegram_send_pdf(f"🧾 OS Nº {os_num}", caminho_os_pdf, dedupe_key=f"os_pdf_{os_num}", dedupe_window_sec=300)
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         carregar_manutencao()
         ent_cpf_m.delete(0, "end")
         ent_nome_m.config(state="normal")
@@ -7089,13 +7095,13 @@ def abrir_sistema_com_logo(username, login_win):
             🧾 OS Nº: {os_num}
             💰 Valor: R$ {valor:.2f}
             🕒 {hoje} {hora}""", dedupe_key=f"os_aprovada_{os_num}", dedupe_window_sec=300)
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             return
         if valor <= 0:
             messagebox.showwarning("Atenção", "Valor inválido para aprovar.")
             return
-        hoje = datetime.datetime.now().strftime("%d/%m/%Y")
+        hoje = today_br()
         hora = datetime.datetime.now().strftime("%H:%M:%S")
         try:
             with conn:
@@ -7215,7 +7221,7 @@ def abrir_sistema_com_logo(username, login_win):
                 "Atenção", "Preencha nome, item e motivo da devolução"
             )
             return
-        data = datetime.datetime.now().strftime("%d/%m/%Y")
+        data = today_br()
         hora = datetime.datetime.now().strftime("%H:%M:%S")
         try:
             with conn:
@@ -7231,8 +7237,8 @@ def abrir_sistema_com_logo(username, login_win):
             📦 Item: {item}
             📝 Motivo: {motivo}
             🕒 {data} {hora}""", dedupe_key=f"devolucao_{data}_{hora}_{item}", dedupe_window_sec=60)
-            except Exception:
-                pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             ent_nome_dev.delete(0, "end")
             ent_devolucao.delete(0, "end")
             ent_motivo_dev.delete(0, "end")
@@ -7252,9 +7258,8 @@ def abrir_sistema_com_logo(username, login_win):
             # Fallback minimalista (sem variáveis soltas bg/fg)
             try:
                 messagebox.showinfo('Backup', text)
-            except Exception:
-                pass
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
     def _backup_timer_tick():
         """Executa os backups e reprograma o próximo disparo (30 min)."""
         try:
@@ -7263,13 +7268,13 @@ def abrir_sistema_com_logo(username, login_win):
             backup_bulk_dir(os.path.join(os.getcwd(), "OS"), "OS")
             backup_bulk_dir(os.path.join(os.getcwd(), "relatorios"), "relatorios")
             try:
-                ts = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                ts = now_br()
                 lbl_status_backup.config(text=f"Backup automático concluído: {ts}")
                 _show_toast_backup("Backup automático concluído", "ok")
-            except Exception:
-                pass
-        except Exception:
-            pass
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         finally:
             root.after(1_800_000, _backup_timer_tick)
     # Disparo inicial: 5 min; depois agenda de 30 min
@@ -7277,9 +7282,8 @@ def abrir_sistema_com_logo(username, login_win):
     # Atualiza os totais do caixa ao abrir a janela
     try:
         atualizar_caixa()
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     # ====== STATUS BAR (versão | backup | usuário | data/hora) ======
     statusbar = tk.Frame(root, bg=palette['panel'], highlightbackground=palette['border'], highlightthickness=1)
     statusbar.pack(side='bottom', fill='x', pady=(0, 4))
@@ -7298,18 +7302,17 @@ def abrir_sistema_com_logo(username, login_win):
     lbl_status_licenca.pack(side='left', padx=10, pady=6)
     try:
         bind_licenca_statusbar_auto_update(root, lbl_status_licenca, interval_ms=60000)
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     lbl_status_clock = tk.Label(statusbar, text="", bg=palette['panel'], fg=palette['muted'], font=("Segoe UI", 9))
     lbl_status_clock.pack(side='right', padx=10, pady=6)
 
     def _tick_clock():
         try:
-            now = datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+            now = now_br()
             lbl_status_clock.config(text=now)
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         root.after(1000, _tick_clock)
 
     _tick_clock()
@@ -7320,8 +7323,8 @@ def abrir_sistema_com_logo(username, login_win):
             statusbar.configure(bg=pal['panel'], highlightbackground=pal['border'])
             for w in (lbl_status_left, lbl_status_backup, lbl_status_user, lbl_status_clock):
                 w.configure(bg=pal['panel'], fg=pal['muted'])
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
 # ================= TELA DE LOGIN =================
 
 def abrir_login():
@@ -7337,9 +7340,8 @@ def abrir_login():
     style = ttk.Style()
     try:
         style.theme_use("clam")
-    except Exception:
-        pass
-
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
     # Dark fixo
     pal = THEME_DARK
 
@@ -7429,24 +7431,22 @@ def abrir_login():
             if os.path.isfile(remember_path):
                 with open(remember_path, "r", encoding="utf-8") as f:
                     return (f.read() or "").strip()
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
         return ""
 
     def _save_remembered_user(username: str):
         try:
             with open(remember_path, "w", encoding="utf-8") as f:
                 f.write((username or "").strip())
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     def _clear_remembered_user():
         try:
             if os.path.isfile(remember_path):
                 os.remove(remember_path)
-        except Exception:
-            pass
-
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
     tk.Label(frm, text="Usuário", bg=pal["panel"], fg=pal["muted"], font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(6, 2))
     ent_user = ttk.Entry(frm)
     ent_user.pack(fill="x", pady=(0, 8))
@@ -7493,7 +7493,9 @@ def abrir_login():
             messagebox.showerror("Erro", "Usuário não encontrado")
             return
 
-        if hash_password(pw) == r[0]:
+        if verify_password(pw, r[0]):
+            # Upgrade automático de hash legado (sha256) para PBKDF2
+            maybe_upgrade_password_hash(user, pw, r[0])
             if remember_var.get() == 1:
                 _save_remembered_user(user)
             else:
@@ -7536,7 +7538,7 @@ def abrir_login():
             messagebox.showwarning("Atenção", "Informe usuário e senha para criar")
             return
         try:
-            today = datetime.datetime.now().strftime("%d/%m/%Y")
+            today = today_br()
             with conn:
                 cursor.execute("PRAGMA table_info(users)")
                 cols = [c[1] for c in cursor.fetchall()]
@@ -7572,19 +7574,17 @@ def abrir_login():
         if messagebox.askyesno("Sair", "Deseja encerrar o sistema?"):
             try:
                 show_goodbye_screen(login_win, "Até Logo,\nBom descanso", duration_ms=1500)
-            except Exception:
-                pass
-
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
             def _finalizar_saida():
                 try:
                     conn.close()
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
                 try:
                     login_win.destroy()
-                except Exception:
-                    pass
-
+                except Exception as ex:
+                    logging.error("Erro ignorado: %s", ex, exc_info=True)
             login_win.after(1600, _finalizar_saida)
             return
         return
@@ -7609,5 +7609,5 @@ if __name__ == "__main__":
             messagebox.showerror(
                 "Erro", "Falha ao iniciar a aplicação. Consulte o arquivo de logs."
             )
-        except Exception:
-            pass
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
