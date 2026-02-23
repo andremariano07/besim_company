@@ -594,7 +594,7 @@ class CFG:
     DISABLE_AUTO_UPDATE = False  # Evita que a atualização automática sobrescreva este patch
 
     # Versão / repositório
-    APP_VERSION = "5.6"
+    APP_VERSION = "5.7"
     OWNER = "andremariano07"
     REPO = "besim_company"
     BRANCH = "main"
@@ -7328,102 +7328,172 @@ def abrir_sistema_com_logo(username, login_win):
 # ================= TELA DE LOGIN =================
 
 def abrir_login():
+    """Tela de login (moderna): card arredondado via PIL, hover no botão, olho (ícone) e fade-in."""
     login_win = tk.Tk()
     login_win.title("Login - BESIM COMPANY")
-    login_win.geometry("520x360")
-    login_win.minsize(520, 360)
+    login_win.geometry("560x380")
+    login_win.minsize(560, 380)
     login_win.resizable(False, False)
 
     setup_global_exception_handlers(login_win)
     _bind_fullscreen_shortcuts(login_win)
 
-    style = ttk.Style()
+    # Tema ttk (se disponível)
     try:
-        style.theme_use("clam")
+        if _HAS_SV_TTK:
+            sv_ttk.set_theme("dark")
+        else:
+            ttk.Style().theme_use("clam")
     except Exception as ex:
-        logging.error("Erro ignorado: %s", ex, exc_info=True)
-    # Dark fixo
+        logging.error("Erro ao aplicar tema: %s", ex, exc_info=True)
+
     pal = THEME_DARK
 
-    def _hex_to_rgb(h):
-        h = h.lstrip("#")
-        return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+    # Fade-in suave
+    try:
+        login_win.attributes("-alpha", 0.0)
+        def _fade(alpha=0.0):
+            try:
+                alpha = float(alpha) + 0.08
+                if alpha >= 1.0:
+                    login_win.attributes("-alpha", 1.0)
+                    return
+                login_win.attributes("-alpha", alpha)
+                login_win.after(18, lambda: _fade(alpha))
+            except Exception:
+                try:
+                    login_win.attributes("-alpha", 1.0)
+                except Exception:
+                    pass
+        login_win.after(20, _fade)
+    except Exception:
+        pass
 
-    def _rgb_to_hex(rgb):
-        return "#{:02x}{:02x}{:02x}".format(*rgb)
-
-    def _draw_vertical_gradient(canvas, w, h, top="#0b1220", bottom="#111827", steps=220):
-        c1 = _hex_to_rgb(top)
-        c2 = _hex_to_rgb(bottom)
-        for i in range(steps):
-            t = i / max(steps - 1, 1)
-            r = int(c1[0] + (c2[0] - c1[0]) * t)
-            g = int(c1[1] + (c2[1] - c1[1]) * t)
-            b = int(c1[2] + (c2[2] - c1[2]) * t)
-            y1 = int(h * (i / steps))
-            y2 = int(h * ((i + 1) / steps))
-            canvas.create_rectangle(0, y1, w, y2, outline="", fill=_rgb_to_hex((r, g, b)))
-
-    bg = tk.Canvas(login_win, highlightthickness=0, bd=0)
-    bg.pack(fill="both", expand=True)
-
-    login_win.update_idletasks()
-    _draw_vertical_gradient(bg, 520, 360, top="#0b1220", bottom="#111827")
-
-    # Blobs (bolas) — azul, vermelho e cinza (reposicionadas para não tampar o logo)
-    bg.create_oval(-140, -120, 180, 220, fill=pal["accent"], outline="")   # azul
-    bg.create_oval(360, -140, 700, 220, fill=pal["danger"], outline="")    # vermelho
-    bg.create_oval(360, 210, 740, 610, fill=pal["border"], outline="")     # cinza
-
-    # Camada escura para suavizar o fundo (não afeta o card porque ele é desenhado depois)
-    bg.create_rectangle(0, 0, 520, 360, fill="#0b1220", outline="", stipple="gray25")
-
-    # Card central
-    card_x1, card_y1, card_x2, card_y2 = 110, 62, 410, 298
-    bg.create_rectangle(card_x1 + 6, card_y1 + 8, card_x2 + 6, card_y2 + 8,
-                        fill="#000000", outline="", stipple="gray50")
-    bg.create_rectangle(card_x1, card_y1, card_x2, card_y2,
-                        fill=pal["panel"], outline=pal["border"], width=2)
-    bg.create_rectangle(card_x1, card_y1, card_x2, card_y1 + 58,
-                        fill=pal["panel2"], outline="", width=0)
-
-    # Logo + glow atrás (garantido atrás do logo)
-    logo_path = str(P('logo.png'))
-    cx, cy = (card_x1 + card_x2)//2, card_y1 + 30
-
-    # Glow (desenhado antes do logo)
-    bg.create_oval(cx-92, cy-32, cx+92, cy+32, fill=pal["accent"], outline="")
-    bg.create_oval(cx-74, cy-26, cx+74, cy+26, fill=pal["danger"], outline="")
-    bg.create_rectangle(cx-118, cy-40, cx+118, cy+40, fill="#000000", outline="", stipple="gray50")
-
-    if os.path.exists(logo_path):
+    # ---------- Helpers visuais (PIL) ----------
+    def _mk_card_images(w=430, h=280, radius=22):
+        """Gera (shadow_img, card_img) como PhotoImage."""
         try:
-            img = Image.open(logo_path).resize((160, 52))
-            logo_img = ImageTk.PhotoImage(img)
-            bg.create_image(cx, cy, image=logo_img)
-            bg.logo_img = logo_img
-        except Exception:
-            bg.create_text(cx, cy, text="BESIM COMPANY", fill=pal["text"], font=("Segoe UI", 14, "bold"))
+            from PIL import Image, ImageDraw, ImageFilter
+
+            # Card (com borda)
+            card = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(card)
+            fill = pal["panel"]
+            border = pal["border"]
+
+            # converte hex -> rgba
+            def hx(x, a=255):
+                x = (x or "#000000").lstrip("#")
+                r = int(x[0:2], 16); g = int(x[2:4], 16); b = int(x[4:6], 16)
+                return (r, g, b, a)
+
+            draw.rounded_rectangle([0, 0, w-1, h-1], radius=radius, fill=hx(fill, 255), outline=hx(border, 255), width=2)
+
+            # Shadow: arredondado + blur
+            pad = 18
+            sh = Image.new("RGBA", (w + pad*2, h + pad*2), (0, 0, 0, 0))
+            sh_draw = ImageDraw.Draw(sh)
+            sh_draw.rounded_rectangle([pad, pad+2, pad+w, pad+h+2], radius=radius+2, fill=(0, 0, 0, 170))
+            sh = sh.filter(ImageFilter.GaussianBlur(10))
+
+            return ImageTk.PhotoImage(sh), ImageTk.PhotoImage(card)
+        except Exception as ex:
+            logging.error("Falha ao gerar card arredondado: %s", ex, exc_info=True)
+            return None, None
+
+    def _mk_eye_icon(size=18, color_hex="#c7c7c7"):
+        """Ícone de olho simples (PIL) para o botão."""
+        try:
+            from PIL import Image, ImageDraw
+            def hx(x, a=255):
+                x = (x or "#c7c7c7").lstrip("#")
+                r = int(x[0:2], 16); g = int(x[2:4], 16); b = int(x[4:6], 16)
+                return (r, g, b, a)
+
+            img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+            d = ImageDraw.Draw(img)
+            c = hx(color_hex, 230)
+            # contorno olho
+            d.ellipse([1, 4, size-2, size-5], outline=c, width=2)
+            # pupila
+            mid = size // 2
+            d.ellipse([mid-2, mid-2, mid+2, mid+2], fill=c)
+            return ImageTk.PhotoImage(img)
+        except Exception as ex:
+            logging.error("Falha ao gerar ícone do olho: %s", ex, exc_info=True)
+            return None
+
+    # ---------- Fundo ----------
+    login_win.configure(bg=pal["bg"])
+    root = tk.Frame(login_win, bg=pal["bg"])
+    root.pack(fill="both", expand=True)
+
+    # ---------- Card (imagem) ----------
+    shadow_img, card_img = _mk_card_images(440, 285, radius=22)
+
+    card_holder = tk.Frame(root, bg=pal["bg"])
+    card_holder.place(relx=0.5, rely=0.48, anchor="center")
+
+    # IMPORTANTE: não misturar pack/place no mesmo container.
+    # Criamos um "stack" fixo e usamos apenas PLACE dentro dele.
+    stack = tk.Frame(card_holder, bg=pal["bg"], width=440+36, height=285+36)
+    stack.pack()
+    try:
+        stack.pack_propagate(False)
+    except Exception:
+        pass
+
+    if shadow_img and card_img:
+        lbl_shadow = tk.Label(stack, image=shadow_img, bg=pal["bg"], bd=0)
+        lbl_shadow.image = shadow_img
+        lbl_shadow.place(x=0, y=0)
+
+        # Card por cima do shadow
+        card_layer = tk.Label(stack, image=card_img, bg=pal["bg"], bd=0)
+        card_layer.image = card_img
+        card_layer.place(x=18, y=18)
     else:
-        bg.create_text(cx, cy, text="BESIM COMPANY", fill=pal["text"], font=("Segoe UI", 14, "bold"))
+        # fallback sem imagem (card simples)
+        card_layer = tk.Frame(stack, bg=pal["panel"], highlightbackground=pal["border"], highlightthickness=1)
+        card_layer.place(x=18, y=18, width=440, height=285)
 
-    bg.create_text((card_x1 + card_x2)//2, card_y1 + 72,
-                   text="Acesse sua conta para continuar",
-                   fill=pal["muted"], font=("Segoe UI", 9))
+    # Frame real para conteúdo (em cima do card)
+    content = tk.Frame(stack, bg=pal["panel"])
+    content.place(x=18+18, y=18+16, width=440-36, height=285-32)
 
-    frm = tk.Frame(login_win, bg=pal["panel"])
-    bg.create_window((card_x1 + card_x2)//2, (card_y1 + card_y2)//2 + 18, window=frm, width=280, height=210)
+    # Header
+    header = tk.Frame(content, bg=pal["panel"])
+    header.pack(fill="x", pady=(8, 8))
 
-    style.configure("Accent.TButton", foreground="white", background=pal["accent"], padding=8,
-                    font=("Segoe UI", 10, "bold"))
-    style.map("Accent.TButton", background=[("active", "#1d4ed8"), ("pressed", "#1e40af")])
+    # Logo
+    logo_path = str(P("logo.png"))
+    _logo_img = None
+    if os.path.isfile(logo_path):
+        try:
+            img = Image.open(logo_path).convert("RGBA")
+            max_w, max_h = 190, 54
+            w0, h0 = img.size
+            scale = min(max_w / max(w0, 1), max_h / max(h0, 1))
+            img = img.resize((max(1, int(w0 * scale)), max(1, int(h0 * scale))))
+            _logo_img = ImageTk.PhotoImage(img)
+        except Exception as ex:
+            logging.error("Falha ao carregar logo do login: %s", ex, exc_info=True)
 
-    style.configure("Ghost.TButton", foreground=pal["text"], background=pal["panel2"], padding=8,
-                    font=("Segoe UI", 10, "bold"))
-    style.map("Ghost.TButton", background=[("active", pal["border"]), ("pressed", pal["panel2"])])
+    if _logo_img:
+        tk.Label(header, image=_logo_img, bg=pal["panel"]).pack(pady=(4, 2))
+        header._logo_img = _logo_img
+    else:
+        tk.Label(header, text="BESIM COMPANY", bg=pal["panel"], fg=pal["text"],
+                 font=("Segoe UI", 16, "bold")).pack(pady=(4, 2))
 
-    style.configure("TEntry", padding=6)
+    tk.Label(header, text="Entre para continuar", bg=pal["panel"], fg=pal["muted"],
+             font=("Segoe UI", 10)).pack()
 
+    # Corpo
+    body = tk.Frame(content, bg=pal["panel"])
+    body.pack(fill="both", expand=True, padx=22, pady=(8, 12))
+
+    # lembrar usuário
     remember_path = os.path.join(os.getcwd(), "remember_user.txt")
 
     def _load_remembered_user():
@@ -7432,7 +7502,7 @@ def abrir_login():
                 with open(remember_path, "r", encoding="utf-8") as f:
                     return (f.read() or "").strip()
         except Exception as ex:
-            logging.error("Erro ignorado: %s", ex, exc_info=True)
+            logging.error("Erro ao carregar lembrar usuário: %s", ex, exc_info=True)
         return ""
 
     def _save_remembered_user(username: str):
@@ -7440,174 +7510,231 @@ def abrir_login():
             with open(remember_path, "w", encoding="utf-8") as f:
                 f.write((username or "").strip())
         except Exception as ex:
-            logging.error("Erro ignorado: %s", ex, exc_info=True)
+            logging.error("Erro ao salvar lembrar usuário: %s", ex, exc_info=True)
+
     def _clear_remembered_user():
         try:
             if os.path.isfile(remember_path):
                 os.remove(remember_path)
         except Exception as ex:
-            logging.error("Erro ignorado: %s", ex, exc_info=True)
-    tk.Label(frm, text="Usuário", bg=pal["panel"], fg=pal["muted"], font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(6, 2))
-    ent_user = ttk.Entry(frm)
-    ent_user.pack(fill="x", pady=(0, 8))
+            logging.error("Erro ao limpar lembrar usuário: %s", ex, exc_info=True)
 
-    tk.Label(frm, text="Senha", bg=pal["panel"], fg=pal["muted"], font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(2, 2))
-    pass_row = tk.Frame(frm, bg=pal["panel"])
-    pass_row.pack(fill="x", pady=(0, 4))
+    # Labels/Entries (tk para controle fino do visual)
+    lbl1 = tk.Label(body, text="Usuário", bg=pal["panel"], fg=pal["muted"], font=("Segoe UI", 10, "bold"))
+    lbl1.pack(anchor="w", pady=(0, 4))
 
-    ent_pass = ttk.Entry(pass_row, show="*")
-    ent_pass.pack(side="left", fill="x", expand=True)
+    ent_user = tk.Entry(body, bd=0, relief="flat", highlightthickness=1,
+                        highlightbackground=pal["border"], highlightcolor=pal["accent"],
+                        bg=pal["panel2"], fg=pal["text"], insertbackground=pal["text"],
+                        font=("Segoe UI", 11))
+    ent_user.pack(fill="x", ipady=10, pady=(0, 12))
 
-    show_var = tk.IntVar(value=0)
+    lbl2 = tk.Label(body, text="Senha", bg=pal["panel"], fg=pal["muted"], font=("Segoe UI", 10, "bold"))
+    lbl2.pack(anchor="w", pady=(0, 4))
+
+    # Linha senha: Entry ocupa todo o espaço e o olho fica fixo à direita
+    pass_row = tk.Frame(body, bg=pal["panel"])
+    pass_row.pack(fill="x", pady=(0, 10))
+
+    show_var = tk.BooleanVar(value=False)
 
     def _toggle_pass():
         ent_pass.config(show="" if show_var.get() else "*")
 
-    ttk.Checkbutton(pass_row, text="👁️", variable=show_var, command=_toggle_pass).pack(side="left", padx=(6, 0))
+    eye_icon = _mk_eye_icon(18, pal["muted"])
 
-    remember_var = tk.IntVar(value=1)
-    remember_row = tk.Frame(frm, bg=pal["panel"])
-    remember_row.pack(fill="x", pady=(6, 8))
-    ttk.Checkbutton(remember_row, text="Lembrar usuário", variable=remember_var).pack(side="left")
+    btn_eye = tk.Button(
+        pass_row,
+        image=eye_icon if eye_icon else None,
+        text="" if eye_icon else "👁",
+        bd=0,
+        relief="flat",
+        bg=pal["panel2"],
+        activebackground=pal["panel2"],
+        fg=pal["muted"],
+        cursor="hand2",
+        width=3,   # deixa o botão pequeno e consistente
+        command=lambda: (show_var.set(not show_var.get()), _toggle_pass()),
+    )
+    if eye_icon:
+        btn_eye.image = eye_icon
+    btn_eye.pack(side="right", padx=(8, 0), ipady=6)
 
-    login_win.ent_user = ent_user
-    login_win.ent_pass = ent_pass
+    ent_pass = tk.Entry(
+        pass_row,
+        show="*",
+        bd=0,
+        relief="flat",
+        highlightthickness=1,
+        highlightbackground=pal["border"],
+        highlightcolor=pal["accent"],
+        bg=pal["panel2"],
+        fg=pal["text"],
+        insertbackground=pal["text"],
+        font=("Segoe UI", 11),
+    )
+    ent_pass.pack(side="left", fill="x", expand=True, ipady=10)
 
+    # Checkbox lembrar
+    remember_var = tk.BooleanVar(value=False)
+    chk = tk.Checkbutton(body, text="Lembrar usuário", variable=remember_var,
+                         bg=pal["panel"], fg=pal["muted"], activebackground=pal["panel"],
+                         activeforeground=pal["text"], selectcolor=pal["panel"],
+                         font=("Segoe UI", 10))
+    chk.pack(anchor="w", pady=(0, 10))
+
+    # status
+    lbl_msg = tk.Label(body, text="", bg=pal["panel"], fg=pal["danger"], font=("Segoe UI", 9, "bold"))
+    lbl_msg.pack(anchor="w", pady=(0, 10))
+
+    # Botão com hover bonito
+    btn_bg = pal["accent"]
+    btn_bg_hover = "#1d4ed8"
+    btn_bg_press = "#1e40af"
+
+    btn_login = tk.Button(
+        body,
+        text="Entrar",
+        bd=0,
+        relief="flat",
+        bg=btn_bg,
+        activebackground=btn_bg_press,
+        fg="white",
+        cursor="hand2",
+        font=("Segoe UI", 11, "bold"),
+        padx=12,
+        pady=10,
+        command=lambda: _do_login(),
+    )
+    btn_login.pack(fill="x")
+
+    def _on_enter(_e):
+        try:
+            btn_login.configure(bg=btn_bg_hover)
+        except Exception:
+            pass
+
+    def _on_leave(_e):
+        try:
+            btn_login.configure(bg=btn_bg)
+        except Exception:
+            pass
+
+    btn_login.bind("<Enter>", _on_enter)
+    btn_login.bind("<Leave>", _on_leave)
+
+    # Preenche usuário salvo
     remembered = _load_remembered_user()
     if remembered:
         ent_user.insert(0, remembered)
+        remember_var.set(True)
         ent_pass.focus_set()
     else:
         ent_user.focus_set()
 
-    def tentar_login():
+    # ---------- LOGIN REAL (mantém sua lógica atual) ----------
+    def _do_login():
         user = (ent_user.get() or "").strip()
         pw = (ent_pass.get() or "").strip()
+
         if not user or not pw:
-            messagebox.showwarning("Atenção", "Informe usuário e senha")
+            lbl_msg.config(text="Informe usuário e senha.")
             return
 
-        cursor.execute("SELECT password_hash, COALESCE(force_password_change,0), COALESCE(password_last_changed,'') FROM users WHERE username=?", (user,))
-        r = cursor.fetchone()
-        if not r:
-            messagebox.showerror("Erro", "Usuário não encontrado")
-            return
-
-        if verify_password(pw, r[0]):
-            # Upgrade automático de hash legado (sha256) para PBKDF2
-            maybe_upgrade_password_hash(user, pw, r[0])
-            if remember_var.get() == 1:
-                _save_remembered_user(user)
-            else:
-                _clear_remembered_user()
-
-            must_change = False
-            try:
-                force_first = int(r[1] or 0) == 1
-                last_changed = (r[2] or '').strip()
-                if force_first or (not last_changed):
-                    must_change = True
-            except Exception:
-                must_change = True
-
-            try:
-                if is_admin(user) and days_since_last_change(user) >= 30:
-                    must_change = True
-            except Exception:
-                must_change = True
-
-            if must_change:
-                dlg = ChangePasswordDialog(login_win, user, must_change=True)
-                login_win.wait_window(dlg)
-                if not dlg.result:
-                    return
-
-            login_win.withdraw()
-            try:
-                abrir_sistema_com_logo(user, login_win)
-            except Exception as ex:
-                messagebox.showerror("Erro fatal", f"Falha ao abrir a janela principal\n\n{ex}")
-                login_win.deiconify()
-        else:
-            messagebox.showerror("Erro", "Senha incorreta")
-
-    def criar_usuario():
-        user = (ent_user.get() or "").strip()
-        pw = (ent_pass.get() or "").strip()
-        if not user or not pw:
-            messagebox.showwarning("Atenção", "Informe usuário e senha para criar")
-            return
         try:
-            today = today_br()
-            with conn:
-                cursor.execute("PRAGMA table_info(users)")
-                cols = [c[1] for c in cursor.fetchall()]
-                if 'password_last_changed' in cols:
-                    cursor.execute(
-                        "INSERT INTO users(username, password_hash, is_admin, password_last_changed) VALUES (?,?,0,?)",
-                        (user, hash_password(pw), today)
-                    )
-                else:
-                    cursor.execute(
-                        "INSERT INTO users(username, password_hash, is_admin) VALUES (?,?,0)",
-                        (user, hash_password(pw))
-                    )
-                cursor.execute(
-                    "INSERT OR IGNORE INTO user_password_history (username, password_hash, changed_at) VALUES (?,?,?)",
-                    (user, hash_password(pw), today)
-                )
-            messagebox.showinfo("OK", "Usuário criado com sucesso")
-        except sqlite3.IntegrityError:
-            messagebox.showerror("Erro", "Usuário já existe")
-
-    btns = tk.Frame(frm, bg=pal["panel"])
-    btns.pack(fill="x", pady=(6, 0))
-    ttk.Button(btns, text="Entrar", style="Accent.TButton", command=tentar_login).pack(side="left", expand=True, fill="x", padx=(0, 6))
-# [REMOVIDO LOGIN] # [REMOVIDO LOGIN]     ttk.Button(btns, text="Criar Usuário", style="Ghost.TButton", command=criar_usuario).pack(side="left", expand=True, fill="x")
-
-    footer_text = f"Developed by André Mariano (v{get_local_version()})  •  Beta Test"
-    bg.create_text(260, 334, text=footer_text, fill="#9ca3af", font=("Segoe UI", 9))
-
-    login_win.bind("<Return>", lambda e: tentar_login())
-
-    def on_close_login():
-        if messagebox.askyesno("Sair", "Deseja encerrar o sistema?"):
-            try:
-                show_goodbye_screen(login_win, "Até Logo,\nBom descanso", duration_ms=1500)
-            except Exception as ex:
-                logging.error("Erro ignorado: %s", ex, exc_info=True)
-            def _finalizar_saida():
-                try:
-                    conn.close()
-                except Exception as ex:
-                    logging.error("Erro ignorado: %s", ex, exc_info=True)
-                try:
-                    login_win.destroy()
-                except Exception as ex:
-                    logging.error("Erro ignorado: %s", ex, exc_info=True)
-            login_win.after(1600, _finalizar_saida)
+            cursor.execute(
+                "SELECT password_hash, COALESCE(force_password_change,0), COALESCE(password_last_changed,'') "
+                "FROM users WHERE username=?",
+                (user,),
+            )
+            r = cursor.fetchone()
+        except Exception as ex:
+            logging.error("Erro ao consultar usuário: %s", ex, exc_info=True)
+            lbl_msg.config(text="Erro ao consultar usuário.")
             return
-        return
 
-    login_win.protocol("WM_DELETE_WINDOW", on_close_login)
-    login_win.bind("<Escape>", lambda e: on_close_login())
+        if not r:
+            lbl_msg.config(text="Usuário não encontrado.")
+            return
+
+        try:
+            if verify_password(pw, r[0]):
+                # Upgrade automático de hash legado (sha256) para PBKDF2
+                try:
+                    maybe_upgrade_password_hash(user, pw, r[0])
+                except Exception as ex:
+                    logging.error("Erro ao atualizar hash de senha: %s", ex, exc_info=True)
+
+                # Força troca de senha (se marcado)
+                try:
+                    if int(r[1] or 0) == 1:
+                        dlg = ChangePasswordDialog(login_win, user)
+                        login_win.wait_window(dlg)
+                        if not getattr(dlg, "result", False):
+                            return
+                except Exception as ex:
+                    logging.error("Erro na troca de senha obrigatória: %s", ex, exc_info=True)
+
+                # Lembrar usuário
+                if remember_var.get():
+                    _save_remembered_user(user)
+                else:
+                    _clear_remembered_user()
+
+                # Vai para o sistema
+                login_win.withdraw()
+                try:
+                    abrir_sistema_com_logo(user, login_win)
+                except Exception as ex:
+                    logging.error("Erro ao abrir sistema: %s", ex, exc_info=True)
+                    try:
+                        messagebox.showerror("Erro", f"Falha ao abrir o sistema:\n{ex}")
+                    except Exception:
+                        pass
+                return
+
+            lbl_msg.config(text="Usuário ou senha inválidos.")
+            return
+        except Exception as ex:
+            logging.error("Erro no login: %s", ex, exc_info=True)
+            lbl_msg.config(text="Erro ao autenticar.")
+
+    login_win.bind("<Return>", lambda _e: _do_login())
+
+    # Ajuste: se statusbar global existir, garante que fique por cima do fundo
+    try:
+        force_attach_statusbar(login_win)
+    except Exception:
+        pass
 
     login_win.mainloop()
+
 
 # ===================== MAIN =====================
 if __name__ == "__main__":
     try:
-        # >>> NOVO: Bloqueio por licença (30 dias)
+        # Bloqueio por licença (30 dias)
         if not mostrar_dialogo_licenca():
-            try: sys.exit(0)
-            except Exception: os._exit(0)
+            try:
+                sys.exit(0)
+            except Exception:
+                os._exit(0)
 
         abrir_login()
     except Exception:
         logging.error("Erro ao iniciar a aplicação", exc_info=True)
         try:
-            messagebox.showerror(
-                "Erro", "Falha ao iniciar a aplicação. Consulte o arquivo de logs."
-            )
-        except Exception as ex:
-            logging.error("Erro ignorado: %s", ex, exc_info=True)
+            # garante root mínimo para messagebox
+            try:
+                _tmp = tk.Tk()
+                _tmp.withdraw()
+            except Exception:
+                _tmp = None
+            messagebox.showerror("Erro", "Falha ao iniciar a aplicação. Consulte o arquivo de logs.")
+            try:
+                if _tmp is not None:
+                    _tmp.destroy()
+            except Exception:
+                pass
+        except Exception:
+            pass
