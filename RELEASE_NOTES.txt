@@ -1,3 +1,106 @@
+VERSÃO 5.7
+
+✅ Melhorias implementadas nesta versão
+
+Melhorias na tela de login
+
+🔥 Estabilidade e Correções Críticas
+
+Corrigida falha de recursão infinita ao finalizar vendas (maximum recursion depth exceeded).
+
+Removidos blocos except: pass que ocultavam erros — agora todas as exceções são registradas em log.
+
+Padronizado tratamento global de exceções com mensagens amigáveis e registro detalhado em sistema_loja_errors.log.
+
+🗓 Padronização de Datas e Horários
+
+Criados helpers únicos:
+
+today_br()
+
+now_br()
+
+today_iso()
+
+now_iso()
+
+Eliminado uso direto e inconsistente de strftime() espalhado pelo código.
+
+Redução de bugs causados por formatos divergentes de data.
+
+🗄 Banco de Dados (SQLite)
+
+Padronizado uso de transações com:
+
+with conn:
+
+Eliminados commit() manuais redundantes.
+
+Centralizada conexão e cursor em classe DB.
+
+Maior segurança contra corrupção de dados e commits esquecidos.
+
+⚙ Centralização de Configurações
+
+Criada classe CFG para agrupar constantes globais:
+
+versão do app
+
+dias de licença
+
+política de senha
+
+etc.
+
+Redução de “variáveis soltas” espalhadas pelo arquivo.
+
+🔐 Segurança de Senhas (Upgrade Importante)
+
+Substituído SHA256 simples por PBKDF2 + salt (100.000 iterações).
+
+Implementado sistema híbrido:
+
+usuários antigos continuam funcionando
+
+hashes legados são automaticamente atualizados no primeiro login
+
+Aumentada significativamente a resistência contra ataques de força bruta.
+
+🧠 Logging Profissional
+
+Criado helper log_exc() para padronizar registros de erro.
+
+Todas as exceções agora incluem stack trace (exc_info=True).
+
+Facilita diagnóstico remoto e manutenção.
+
+🧹 Limpeza de Código
+
+Removidos imports não utilizados.
+
+Redução de globais diretos.
+
+Organização interna de funções grandes usando funções aninhadas.
+
+Código mais legível e previsível.
+
+🏗 Estrutura Interna Melhorada (sem dividir arquivos)
+
+Introduzidas mini-classes:
+
+CFG → configurações
+
+DB → banco
+
+Mantida compatibilidade total com versões anteriores.
+
+Nenhuma mudança na arquitetura externa do projeto.
+
+
+
+
+
+
 VERSÃO 5.6
 
 ✅ Melhorias implementadas nesta versão
