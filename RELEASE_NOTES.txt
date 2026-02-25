@@ -1,5 +1,36 @@
 VERSÃO 5.7
 
+✅ Correções e Melhorias na Licença
+
+Corrigido erro que permitia o funcionamento do sistema com a key vencida.
+
+Implementado bloqueio automático quando a licença estiver expirada.
+
+Validação reforçada da data de expiração diretamente no sistema.
+
+✅ Notificação Automática no Telegram
+
+Adicionado alerta automático via Telegram quando faltar 1 dia para o vencimento da licença.
+
+Notificação enviada apenas uma vez por ciclo de vencimento (evita mensagens repetidas).
+
+✅ Novo Sistema de Identificação da Máquina
+
+ID da máquina agora gerado com 8 dígitos numéricos.
+
+Mensagem adicionada na tela de ativação:
+“Envie o ID da máquina para o seu distribuidor para realizar a ativação juntamente com seu e-mail.”
+
+✅ Melhorias Gerais
+
+Maior segurança no controle de ativação.
+
+Melhor organização da validação de licença.
+
+Sistema mais protegido contra uso indevido após vencimento.
+
+VERSÃO 5.7
+
 ✅ Melhorias implementadas nesta versão
 
 Melhorias na tela de login
