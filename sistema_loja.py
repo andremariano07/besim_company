@@ -594,7 +594,7 @@ class CFG:
     DISABLE_AUTO_UPDATE = False  # Evita que a atualização automática sobrescreva este patch
 
     # Versão / repositório
-    APP_VERSION = "5.7"
+    APP_VERSION = "5.8"
     OWNER = "andremariano07"
     REPO = "besim_company"
     BRANCH = "main"
@@ -808,6 +808,41 @@ def _meta_set(key: str, value: str):
             )
     except Exception as ex:
         logging.error("Erro ignorado: %s", ex, exc_info=True)
+
+def notify_licenca_expirando_1dia_once():
+    """Envia Telegram quando faltar 1 dia para vencer (uma vez por dia/por vencimento)."""
+    try:
+        lic = obter_licenca_db()
+        if not lic:
+            return
+        expira_iso = (lic.get("expira_em") or "").strip()
+        if not expira_iso:
+            return
+
+        exp_date = datetime.datetime.strptime(expira_iso, "%Y-%m-%d").date()
+        hoje = datetime.date.today()
+        dias = (exp_date - hoje).days
+
+        if dias != 1:
+            return
+
+        meta_key = f"lic_warn_1dia_{expira_iso}"
+        if _meta_get(meta_key, "0") == "1":
+            return
+
+        mid = (get_machine_id() or "").strip()
+        br = exp_date.strftime("%d/%m/%Y")
+        msg = (
+            "⚠️ <b>LICENÇA EXPIRA EM 1 DIA</b>\n"
+            f"🗓 Vencimento: {br}\n"
+            f"🆔 ID da máquina: <code>{mid}</code>\n\n"
+            "Envie o ID da máquina para o seu distribuidor para realizar a ativação juntamente com seu e-mail e o comprovante de R$150,00 refrente ao mês da ativalção."
+        )
+        telegram_notify(msg, dedupe_key=meta_key, dedupe_window_sec=120)
+        _meta_set(meta_key, "1")
+    except Exception as ex:
+        logging.error("Erro ignorado: %s", ex, exc_info=True)
+
 def notify_agendamentos_hoje_once():
     """Se houver agendamento para HOJE, envia Telegram uma vez por dia (ao abrir o sistema)."""
     try:
@@ -1534,12 +1569,20 @@ def _add_days_iso(days: int):
     return (_today_date() + datetime.timedelta(days=int(days))).strftime("%Y-%m-%d")
 
 def get_machine_id() -> str:
-    """Identificador simples do computador para amarrar a licença."""
+    """Gera um ID numérico de 8 dígitos (estável) para amarrar a licença ao computador.
+
+    Observação: este ID é derivado de informações do sistema + usuário e então "compactado"
+    para 8 dígitos. Ele é o ID exibido ao cliente e usado dentro das chaves.
+    """
     try:
         base = f"{platform.node()}|{platform.system()}|{platform.release()}|{getpass.getuser()}|{sys.platform}"
     except Exception:
         base = f"{platform.node()}|{platform.system()}|{platform.release()}|{sys.platform}"
-    return hashlib.sha256(base.encode("utf-8")).hexdigest().upper()
+    digest = hashlib.sha256(base.encode("utf-8")).hexdigest()
+    # Usa parte do hash para gerar um número fixo de 8 dígitos (00000000–99999999)
+    num = int(digest[:16], 16) % 100_000_000
+    return f"{num:08d}"
+
 
 def _hmac8(data: str) -> str:
     sig = hmac.new(LICENSE_SECRET, data.encode("utf-8"), hashlib.sha256).hexdigest().upper()
@@ -1607,9 +1650,36 @@ ON CONFLICT(id) DO UPDATE SET
         )
 
 def licenca_valida_local():
+    """Valida a licença local e BLOQUEIA se estiver vencida.
+
+    Regras:
+    - A licença é válida ATÉ o fim do dia do vencimento.
+    - Se o ID do PC mudou, exige nova ativação.
+    - Além de validar a chave (assinatura + MID), valida também o expira_em salvo no banco.
+    """
     lic = obter_licenca_db()
     if not lic:
         return False, "Licença não ativada."
+
+    # Confere se o PC é o mesmo (MID de 8 dígitos)
+    try:
+        current_mid = (get_machine_id() or "").strip()
+        stored_mid = (lic.get("machine_id") or "").strip()
+        if stored_mid and current_mid and stored_mid != current_mid:
+            return False, "Licença não corresponde a este computador."
+    except Exception:
+        pass
+
+    # Bloqueio por data salva no DB (mais direta e evita inconsistências)
+    try:
+        expira_iso = (lic.get("expira_em") or "").strip()
+        if expira_iso:
+            exp_date = datetime.datetime.strptime(expira_iso, "%Y-%m-%d").date()
+            if _today_date() > exp_date:
+                return False, "Licença vencida. Solicite uma nova."
+    except Exception:
+        pass
+
     ok, msg, _exp = validar_chave_licenca(lic.get("chave", ""), lic.get("machine_id", ""))
     return ok, msg
 
@@ -1678,7 +1748,9 @@ def mostrar_dialogo_licenca(master=None):
     ttk.Label(frm, text="Licença necessária para liberar o sistema.", font=("Segoe UI", 12, "bold")).pack(anchor="w")
     ttk.Label(frm, text="Cole a chave de acesso recebida.\nA licença é válida por 30 dias e expira ao fim do dia do vencimento.", font=("Segoe UI", 10)).pack(anchor="w", pady=(6, 10))
 
-    ttk.Label(frm, text=f"ID deste computador: {machine_id[:8]}…", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 8))
+    ttk.Label(frm, text=f"ID deste computador: {machine_id}", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 4))
+
+    ttk.Label(frm, text="Envie o ID da máquina para o seu distribuidor para realizar a ativação juntamente com seu e-mail.", font=("Segoe UI", 9), foreground="#6b7280", wraplength=520, justify="left").pack(anchor="w", pady=(0, 10))
 
     ttk.Label(frm, text="Chave:", font=("Segoe UI", 10)).pack(anchor="w")
     ent = ttk.Entry(frm, width=46)
@@ -1862,11 +1934,11 @@ def admin_gerar_enviar_licenca_dialog(master):
         ent_email = ttk.Entry(frm, width=40)
         ent_email.grid(row=1, column=1, sticky="w", pady=4)
 
-        ttk.Label(frm, text="ID do PC do cliente (8 primeiros):").grid(row=2, column=0, sticky="w")
+        ttk.Label(frm, text="ID da máquina do cliente (8 dígitos):").grid(row=2, column=0, sticky="w")
         ent_mid8 = ttk.Entry(frm, width=16)
         ent_mid8.grid(row=2, column=1, sticky="w", pady=4)
 
-        ttk.Label(frm, text="Obs.: o cliente vê esse ID na tela de ativação.").grid(row=3, column=1, sticky="w", pady=(0, 8))
+        ttk.Label(frm, text="Obs.: o cliente vê esse ID na tela de ativação (8 dígitos).").grid(row=3, column=1, sticky="w", pady=(0, 8))
 
         lbl_out = ttk.Label(frm, text="", foreground="#6b7280")
         lbl_out.grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
@@ -1874,8 +1946,8 @@ def admin_gerar_enviar_licenca_dialog(master):
         def _gerar_e_enviar():
             email = (ent_email.get() or "").strip()
             mid8 = (ent_mid8.get() or "").strip().upper()
-            if len(mid8) != 8:
-                messagebox.showwarning("Atenção", "Informe os 8 primeiros caracteres do ID do PC do cliente.")
+            if len(mid8) != 8 or (not mid8.isdigit()):
+                messagebox.showwarning("Atenção", "Informe o ID da máquina do cliente (8 dígitos).")
                 return
             exp = _add_days_iso(LICENCA_DIAS)
             fake_mid = mid8 + "0" * 56
@@ -7719,6 +7791,12 @@ if __name__ == "__main__":
                 sys.exit(0)
             except Exception:
                 os._exit(0)
+
+        # Aviso via Telegram quando faltar 1 dia para vencer
+        try:
+            notify_licenca_expirando_1dia_once()
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
 
         abrir_login()
     except Exception:
