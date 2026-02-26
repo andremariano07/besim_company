@@ -1,3 +1,70 @@
+VERSÃO 5.9
+🔹 Caixa
+
+✔ Separação visual dos totais do dia:
+
+Vendas
+
+Outras Entradas
+
+Saídas
+
+Total Real do Caixa
+
+✔ Correção no cálculo do total líquido
+
+✔ Agora entradas positivas lançadas manualmente no Caixa entram no total
+
+✔ Ajuste no fechamento automático do dia anterior
+
+✔ Correção de inconsistência no relatório diário PDF
+
+🔹 Manutenção (OS)
+
+✔ Correção do erro UnboundLocalError (hoje/hora)
+
+✔ Ajuste no envio de notificação Telegram ao aprovar OS
+
+✔ Melhoria na estabilidade da função aprovar_manutencao
+
+✔ Correção de escopo de variáveis internas
+
+🔹 Sistema / Estabilidade
+
+✔ Correção do erro:
+
+can't invoke "destroy" command: application has been destroyed
+
+✔ Tratamento seguro para encerramento do aplicativo
+
+✔ Correção de indentação (erro Pylance)
+
+✔ Padronização de espaços (remoção de conflitos TAB/SPACE)
+
+✔ Melhor tratamento de exceções internas
+
+🔹 Segurança / Estrutura
+
+✔ Melhor controle de variáveis locais
+
+✔ Prevenção de erros silenciosos
+
+✔ Melhor organização de funções internas
+
+✔ Ajuste no fluxo de fechamento do sistema
+
+🔹 Interface
+
+✔ Atualização automática dos totais ao abrir aba Caixa
+
+✔ Melhor sincronização entre lançamentos e indicadores
+
+✔ Ajustes visuais de consistência
+
+📦 Versão Estável
+
+Sistema revisado para maior precisão no controle financeiro diário e maior estabilidade operacional.
+
 VERSÃO 5.8
 
 ✅ Correções e Melhorias na Licença
