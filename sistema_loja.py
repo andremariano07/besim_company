@@ -594,7 +594,7 @@ class CFG:
     DISABLE_AUTO_UPDATE = False  # Evita que a atualização automática sobrescreva este patch
 
     # Versão / repositório
-    APP_VERSION = "5.8"
+    APP_VERSION = "5.7"
     OWNER = "andremariano07"
     REPO = "besim_company"
     BRANCH = "main"
@@ -3805,15 +3805,30 @@ def _dash_fmt_brl(valor: float) -> str:
 # Líquido: bruto - saídas
 
 def calcular_totais_dia(data_str: str = None):
-    """Retorna (vendas_dia, saidas_dia, liquido_dia) para a data informada (dd/mm/aaaa)."""
+    """Retorna (vendas_dia, outras_entradas_dia, saidas_dia, total_caixa_dia) para a data informada (dd/mm/aaaa).
+
+    - vendas_dia: soma da tabela vendas (total)
+    - outras_entradas_dia: soma de entradas manuais no caixa (tabela caixa, valor > 0)
+    - saidas_dia: soma absoluta das saídas (tabela caixa, valor < 0)
+    - total_caixa_dia: vendas_dia + outras_entradas_dia - saidas_dia
+    """
     data_str = data_str or today_br()
 
+    # Vendas do dia (tabela vendas)
     try:
         cursor.execute("SELECT COALESCE(SUM(total),0) FROM vendas WHERE data=?", (data_str,))
         vendas_dia = float((cursor.fetchone() or [0])[0] or 0.0)
     except Exception:
         vendas_dia = 0.0
 
+    # Outras entradas (tabela caixa, valores positivos)
+    try:
+        cursor.execute("SELECT COALESCE(SUM(valor),0) FROM caixa WHERE data=? AND valor > 0", (data_str,))
+        outras_entradas_dia = float((cursor.fetchone() or [0])[0] or 0.0)
+    except Exception:
+        outras_entradas_dia = 0.0
+
+    # Saídas (tabela caixa, valores negativos)
     try:
         cursor.execute("SELECT COALESCE(SUM(valor),0) FROM caixa WHERE data=? AND valor < 0", (data_str,))
         saidas_neg = float((cursor.fetchone() or [0])[0] or 0.0)
@@ -3821,10 +3836,11 @@ def calcular_totais_dia(data_str: str = None):
     except Exception:
         saidas_dia = 0.0
 
-    liquido_dia = float(vendas_dia) - float(saidas_dia)
-    return float(vendas_dia), float(saidas_dia), float(liquido_dia)
+    total_caixa_dia = float(vendas_dia) + float(outras_entradas_dia) - float(saidas_dia)
+    return float(vendas_dia), float(outras_entradas_dia), float(saidas_dia), float(total_caixa_dia)
 
 # ===================== FIM CAIXA: TOTAIS DO DIA =====================
+
 
 
 def _dash_datas_ultimos_dias(n: int = 7):
@@ -4249,9 +4265,10 @@ def abrir_sistema_com_logo(username, login_win):
         # 1) Logout: volta para o login sem mensagem de despedida
         if closing_state.get("mode") == "logout":
             try:
-                root.destroy()
-            except Exception as ex:
-                logging.error("Erro ignorado: %s", ex, exc_info=True)
+                if root and int(root.winfo_exists()):
+                    root.destroy()
+            except Exception:
+                pass
             try:
                 if login_win and login_win.winfo_exists():
                     login_win.deiconify()
@@ -4279,7 +4296,11 @@ def abrir_sistema_com_logo(username, login_win):
                 except Exception as ex:
                     logging.error("Erro ignorado: %s", ex, exc_info=True)
                 try:
-                    root.destroy()
+                    if root and getattr(root, "winfo_exists", lambda: 0)():
+                        root.destroy()
+                except tk.TclError:
+                    # Já foi destruído
+                    pass
                 except Exception as ex:
                     logging.error("Erro ignorado: %s", ex, exc_info=True)
                 try:
@@ -6572,25 +6593,35 @@ def abrir_sistema_com_logo(username, login_win):
     lbl_vendas_dia_cx = ttk.Label(totais_dia_box, text="Vendas: R$ 0,00", font=("Segoe UI", 10, "bold"))
     lbl_vendas_dia_cx.grid(row=0, column=0, sticky="w", padx=(0, 12))
 
-    lbl_saidas_dia_cx = ttk.Label(totais_dia_box, text="Saídas: R$ 0,00", font=("Segoe UI", 10, "bold"))
-    lbl_saidas_dia_cx.grid(row=0, column=1, sticky="w", padx=(0, 12))
+    lbl_outras_entradas_dia_cx = ttk.Label(totais_dia_box, text="Outras entradas: R$ 0,00", font=("Segoe UI", 10, "bold"))
+    lbl_outras_entradas_dia_cx.grid(row=0, column=1, sticky="w", padx=(0, 12))
 
-    lbl_liquido_dia_cx = ttk.Label(totais_dia_box, text="Líquido: R$ 0,00", font=("Segoe UI", 10, "bold"))
-    lbl_liquido_dia_cx.grid(row=0, column=2, sticky="w")
+    lbl_saidas_dia_cx = ttk.Label(totais_dia_box, text="Saídas: R$ 0,00", font=("Segoe UI", 10, "bold"))
+    lbl_saidas_dia_cx.grid(row=0, column=2, sticky="w", padx=(0, 12))
+
+    lbl_total_real_dia_cx = ttk.Label(totais_dia_box, text="Total caixa: R$ 0,00", font=("Segoe UI", 10, "bold"))
+    lbl_total_real_dia_cx.grid(row=0, column=3, sticky="w")
 
     # OS aprovadas (dia)
     lbl_os_aprov_dia_cx = ttk.Label(totais_dia_box, text="OS aprovadas: R$ 0,00", font=("Segoe UI", 10, "bold"))
-    lbl_os_aprov_dia_cx.grid(row=0, column=3, sticky="w", padx=(12, 0))
+    lbl_os_aprov_dia_cx.grid(row=0, column=4, sticky="w", padx=(12, 0))
 
     @ui_safe('Caixa')
     def atualizar_totais_ganho_dia_caixa():
-        """Atualiza os 3 totais no topo da aba Caixa."""
+        """Atualiza os totais no topo da aba Caixa (Vendas / Outras Entradas / Saídas / Total Caixa)."""
         try:
-            vendas_dia, saidas_dia, liquido_dia = calcular_totais_dia()
+            vendas_dia, outras_entradas_dia, saidas_dia, total_caixa_dia = calcular_totais_dia()
             fmt = _dash_fmt_brl if '_dash_fmt_brl' in globals() else (lambda v: f"R$ {float(v or 0):.2f}")
             lbl_vendas_dia_cx.config(text=f"Vendas: {fmt(vendas_dia)}")
+            try:
+                lbl_outras_entradas_dia_cx.config(text=f"Outras entradas: {fmt(outras_entradas_dia)}")
+            except Exception:
+                pass
             lbl_saidas_dia_cx.config(text=f"Saídas: {fmt(saidas_dia)}")
-            lbl_liquido_dia_cx.config(text=f"Líquido: {fmt(liquido_dia)}")
+            try:
+                lbl_total_real_dia_cx.config(text=f"Total caixa: {fmt(total_caixa_dia)}")
+            except Exception:
+                pass
             # OS aprovadas do dia (somente aprovadas)
             try:
                 hoje = today_br()
@@ -6661,6 +6692,9 @@ def abrir_sistema_com_logo(username, login_win):
         if not valor_text:
             messagebox.showwarning("Atenção", "Informe o valor da saída")
             return
+        hoje = today_br()
+        hora = datetime.datetime.now().strftime("%H:%M:%S")
+
 
         if not motivo:
             messagebox.showwarning("Atenção", "Informe o motivo da saída")
@@ -6673,9 +6707,6 @@ def abrir_sistema_com_logo(username, login_win):
                     "Atenção", "Informe um valor positivo para a saída"
                 )
                 return
-
-            hoje = today_br()
-            hora = datetime.datetime.now().strftime("%H:%M:%S")
 
             with conn:
                 cursor.execute(
@@ -7150,6 +7181,8 @@ def abrir_sistema_com_logo(username, login_win):
             return
         item_id = selected[0]
         os_num = tree_m.item(item_id)["values"][0]
+        hoje = today_br()
+        hora = datetime.datetime.now().strftime("%H:%M:%S")
         cursor.execute(
             "SELECT COALESCE(valor,0), COALESCE(aprovado,0) FROM manutencao WHERE os=?",
             (os_num,), # sempre tupla
@@ -7173,8 +7206,6 @@ def abrir_sistema_com_logo(username, login_win):
         if valor <= 0:
             messagebox.showwarning("Atenção", "Valor inválido para aprovar.")
             return
-        hoje = today_br()
-        hora = datetime.datetime.now().strftime("%H:%M:%S")
         try:
             with conn:
                 # >>> ATUALIZADO: grava hora na entrada do caixa (motivo NULL)
