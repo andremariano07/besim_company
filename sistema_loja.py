@@ -594,7 +594,7 @@ class CFG:
     DISABLE_AUTO_UPDATE = False  # Evita que a atualização automática sobrescreva este patch
 
     # Versão / repositório
-    APP_VERSION = "5.8"
+    APP_VERSION = "5.9"
     OWNER = "andremariano07"
     REPO = "besim_company"
     BRANCH = "main"
