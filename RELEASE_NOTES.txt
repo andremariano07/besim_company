@@ -1,3 +1,40 @@
+VERSÃO 6.0
+
+MELHORIAS IMPLEMENTADAS NO SISTEMA
+
+1)  Venda sem produto cadastrado no estoque
+
+-   Agora é possível digitar o nome do produto manualmente.
+-   É possível informar o valor manualmente mesmo sem código cadastrado.
+-   Caso o código exista, o sistema preenche automaticamente produto e
+    valor.
+-   Caso não exista, a venda é registrada normalmente sem baixar
+    estoque.
+
+2)  Cálculo automático do total
+
+-   O total é atualizado automaticamente ao alterar: • Valor •
+    Quantidade
+-   Se a quantidade estiver vazia, o sistema considera 1 unidade.
+
+3)  Correção de erro crítico ao abrir o sistema
+
+-   Corrigido erro: “cannot access local variable ‘atualizar_total’
+    where it is not associated with a value”
+-   A função atualizar_total agora é declarada antes dos binds dos
+    campos.
+
+4)  Correção de erro na aba Vendas
+
+-   Corrigido erro relacionado à função carregar_vendas_dia.
+-   A tabela da aba Vendas volta a carregar normalmente.
+
+5)  Estabilidade geral
+
+-   Ajuste na ordem de definição das funções internas.
+-   Correção de erros de escopo (NameError e UnboundLocalError).
+-   Sistema abre normalmente após login.
+
 VERSÃO 5.9
 🔹 Caixa
 
