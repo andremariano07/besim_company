@@ -594,7 +594,7 @@ class CFG:
     DISABLE_AUTO_UPDATE = False  # Evita que a atualização automática sobrescreva este patch
 
     # Versão / repositório
-    APP_VERSION = "5.9"
+    APP_VERSION = "6.0"
     OWNER = "andremariano07"
     REPO = "besim_company"
     BRANCH = "main"
@@ -6114,8 +6114,11 @@ def abrir_sistema_com_logo(username, login_win):
     ent_cod_v = ttk.Entry(f_v)
     ent_cod_v.grid(row=1, column=1, padx=6, pady=4)
     ttk.Label(f_v, text="Produto").grid(row=1, column=2, sticky="w", padx=6, pady=4)
-    ent_prod_v = ttk.Entry(f_v, state="readonly")
+    ent_prod_v = ttk.Entry(f_v)
     ent_prod_v.grid(row=1, column=3, padx=6, pady=4)
+    ttk.Label(f_v, text="Valor (R$)").grid(row=1, column=4, sticky="w", padx=6, pady=4)
+    ent_valor_v = ttk.Entry(f_v, width=12)
+    ent_valor_v.grid(row=1, column=5, padx=6, pady=4)
     ttk.Label(f_v, text="Qtd").grid(row=2, column=0, sticky="w", padx=6, pady=4)
     ent_qtd_v = ttk.Entry(f_v)
     ent_qtd_v.grid(row=2, column=1, padx=6, pady=4)
@@ -6128,24 +6131,58 @@ def abrir_sistema_com_logo(username, login_win):
     var_desc_10 = tk.IntVar()
     def atualizar_total(event=None):
         try:
-            codigo = ent_cod_v.get().strip()
-            qtd = int(ent_qtd_v.get() or 0)
-            cursor.execute(
-                "SELECT nome,preco,estoque FROM produtos WHERE codigo=?", (codigo,)
-            )
-            r = cursor.fetchone()
+            codigo = (ent_cod_v.get() or "").strip()
+            try:
+                qtd = int(ent_qtd_v.get() or 0)
+            except Exception:
+                qtd = 0
+
+            total = 0.0
+
+            # 1) Tenta produto cadastrado (por código)
+            r = None
+            if codigo:
+                try:
+                    cursor.execute(
+                        "SELECT nome,preco,estoque FROM produtos WHERE codigo=?",
+                        (codigo,),
+                    )
+                    r = cursor.fetchone()
+                except Exception:
+                    r = None
+
             if r:
-                nome_prod, preco, estoque = r
-                total = preco * qtd
-                if var_desc_5.get():
-                    total *= 0.95
-                elif var_desc_10.get():
-                    total *= 0.90
-                lbl_total_v.config(text=f"Total: R$ {total:.2f}")
+                _nome_prod, preco, _estoque = r
+                total = float(preco or 0.0) * float(qtd or 0)
             else:
-                lbl_total_v.config(text="Total: R$ 0.00")
+                # 2) Venda manual: produto + valor (sem depender do estoque)
+                try:
+                    preco_manual = float(
+                        (ent_valor_v.get() or "")
+                        .replace("R$", "")
+                        .replace(" ", "")
+                        .replace(",", ".")
+                    )
+                except Exception:
+                    preco_manual = 0.0
+
+                if qtd <= 0:
+                    qtd = 1  # padrão para venda manual
+                total = float(preco_manual or 0.0) * float(qtd or 0)
+
+            # Descontos
+            if var_desc_5.get():
+                total *= 0.95
+            elif var_desc_10.get():
+                total *= 0.90
+
+            lbl_total_v.config(text=f"Total: R$ {total:.2f}")
         except Exception:
             lbl_total_v.config(text="Total: R$ 0.00")
+    ent_valor_v.bind("<FocusOut>", lambda e: [formatar_moeda(e, ent_valor_v), atualizar_total()])
+    ent_valor_v.bind("<KeyRelease>", atualizar_total)
+    ent_qtd_v.bind("<KeyRelease>", atualizar_total)
+    ent_qtd_v.bind("<FocusOut>", atualizar_total)
     ttk.Checkbutton(
         f_v,
         text="5%",
@@ -6178,16 +6215,48 @@ def abrir_sistema_com_logo(username, login_win):
         row=0, column=4, padx=6
     )
     def buscar_produto_v(event=None):
-        codigo = ent_cod_v.get().strip()
-        ent_prod_v.config(state="normal")
-        ent_prod_v.delete(0, "end")
-        cursor.execute("SELECT nome FROM produtos WHERE codigo=?", (codigo,))
-        r = cursor.fetchone()
+        """Preenche dados do produto quando o código existe no estoque.
+        Se não existir, libera para digitar produto e valor manualmente."""
+        codigo = (ent_cod_v.get() or "").strip()
+
+        # Sempre permite editar (venda manual)
+        try:
+            if codigo:
+                cursor.execute("SELECT nome, preco FROM produtos WHERE codigo=?", (codigo,))
+                r = cursor.fetchone()
+            else:
+                r = None
+        except Exception:
+            r = None
+
         if r:
-            ent_prod_v.insert(0, r[0])
+            nome_db, preco_db = r
+            # Preenche produto
+            try:
+                ent_prod_v.delete(0, "end")
+                ent_prod_v.insert(0, str(nome_db))
+            except Exception:
+                pass
+            # Preenche valor unitário sugerido
+            try:
+                ent_valor_v.delete(0, "end")
+                ent_valor_v.insert(0, f"{float(preco_db):.2f}")
+            except Exception:
+                pass
         else:
-            ent_prod_v.insert(0, "Produto não encontrado")
-        ent_prod_v.config(state="readonly")
+            # Código vazio ou não encontrado: não bloqueia.
+            # Se o usuário ainda não digitou nada, apenas limpa.
+            try:
+                if not str(ent_prod_v.get() or '').strip():
+                    ent_prod_v.delete(0, "end")
+            except Exception:
+                pass
+            try:
+                if not str(ent_valor_v.get() or '').strip():
+                    ent_valor_v.delete(0, "end")
+            except Exception:
+                pass
+
         atualizar_total()
     ent_cod_v.bind("<KeyRelease>", buscar_produto_v)
     ent_cod_v.bind("<FocusOut>", buscar_produto_v)
@@ -6198,24 +6267,63 @@ def abrir_sistema_com_logo(username, login_win):
         try:
             cpf = ent_cpf_v.get().strip()
             cliente = ent_nome_v.get().strip()
-            codigo = ent_cod_v.get().strip()
-            qtd = int(ent_qtd_v.get() or 0)
-            pagamento = ent_pg_v.get().strip()
+            codigo = (ent_cod_v.get() or "").strip()
+            pagamento = (ent_pg_v.get() or "").strip()
+
+            # Quantidade: para venda manual, se vazio/<=0 assume 1
+            try:
+                qtd = int(ent_qtd_v.get() or 0)
+            except Exception:
+                qtd = 0
             if qtd <= 0:
-                messagebox.showerror("Erro", "Quantidade inválida")
-                return
-            cursor.execute(
-                "SELECT nome,preco,estoque FROM produtos WHERE codigo=?", (codigo,)
-            )
-            r = cursor.fetchone()
-            if not r:
-                messagebox.showerror("Erro", "Produto não encontrado")
-                return
-            nome_prod, preco, estoque = r
-            if qtd > estoque:
-                messagebox.showerror("Erro", f"Apenas {estoque} unidades disponíveis")
-                return
-            total = preco * qtd
+                qtd = 1
+
+            # Tenta pegar do estoque (por código). Se não achar, vira venda manual.
+            r = None
+            if codigo:
+                try:
+                    cursor.execute(
+                        "SELECT nome,preco,estoque FROM produtos WHERE codigo=?",
+                        (codigo,),
+                    )
+                    r = cursor.fetchone()
+                except Exception:
+                    r = None
+
+            if r:
+                nome_prod, preco, estoque = r
+                try:
+                    if int(qtd) > int(estoque):
+                        messagebox.showerror("Erro", f"Apenas {estoque} unidades disponíveis")
+                        return
+                except Exception:
+                    pass
+                total = float(preco or 0.0) * float(qtd or 0)
+                venda_cadastrada = True
+                produto = nome_prod
+            else:
+                # Venda manual (produto + valor sem cadastro no estoque)
+                nome_prod = (ent_prod_v.get() or "").strip()
+                if not nome_prod:
+                    messagebox.showerror("Erro", "Informe o nome do produto (venda manual).")
+                    return
+                try:
+                    preco_manual = float(
+                        (ent_valor_v.get() or "")
+                        .replace("R$", "")
+                        .replace(" ", "")
+                        .replace(",", ".")
+                    )
+                except Exception:
+                    preco_manual = 0.0
+                if preco_manual <= 0:
+                    messagebox.showerror("Erro", "Informe um valor válido (venda manual).")
+                    return
+                total = float(preco_manual) * float(qtd or 0)
+                venda_cadastrada = False
+
+                produto = nome_prod
+
             if var_desc_5.get():
                 total *= 0.95
             elif var_desc_10.get():
@@ -6235,10 +6343,11 @@ def abrir_sistema_com_logo(username, login_win):
                 )
                 adicionar_pontos_cliente(cpf, total)
                 # <<< FIM NOVO: pontos
-                cursor.execute(
-                    "UPDATE produtos SET estoque=? WHERE codigo=?",
-                    (estoque - qtd, codigo),
-                )
+                if venda_cadastrada:
+                    cursor.execute(
+                        "UPDATE produtos SET estoque=? WHERE codigo=?",
+                        (estoque - qtd, codigo),
+                    )
                 # >>> ATUALIZADO: grava hora na entrada do caixa (motivo NULL)
                 # Motivo da entrada (Venda) — robusto para diferentes nomes de variáveis
                 _prod = str(locals().get('produto') or locals().get('descricao') or locals().get('prod') or locals().get('produto_nome') or locals().get('nome_produto') or '').strip()
