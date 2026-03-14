@@ -20,6 +20,7 @@ import sqlite3
 import datetime
 import calendar
 import re
+import textwrap
 
 
 # ===================== PADRÃO: Datas e Logging =====================
@@ -594,7 +595,7 @@ class CFG:
     DISABLE_AUTO_UPDATE = False  # Evita que a atualização automática sobrescreva este patch
 
     # Versão / repositório
-    APP_VERSION = "6.0"
+    APP_VERSION = "6.1"
     OWNER = "andremariano07"
     REPO = "besim_company"
     BRANCH = "main"
@@ -620,6 +621,150 @@ DB_PATH = CFG.DB_PATH
 IGNORE_FILES = CFG.IGNORE_FILES
 IGNORE_DIRS = CFG.IGNORE_DIRS
 GOOGLE_DRIVE_BACKUP = CFG.GOOGLE_DRIVE_BACKUP
+
+
+# ===================== IMPRESSÃO TÉRMICA USB (OS) =====================
+# Impressora do cliente: 80 mm, ESC/POS, USB (modelo tipo JP80H-UB / Thermal Receipt Printer).
+AUTO_PRINT_OS = True
+THERMAL_PRINTER_NAME = os.getenv("THERMAL_PRINTER_NAME", "")
+THERMAL_PRINTER_CANDIDATES = [
+    "Thermal Receipt Printer",
+    "JP80H-UB",
+    "JP80",
+    "Goldensky",
+    "POS-80",
+    "POS80 Printer",
+    "Receipt",
+]
+THERMAL_PAPER_WIDTH_MM = 80
+THERMAL_MAX_CHARS = 42  # largura típica em fonte normal para 80 mm
+
+
+def _normalize_money_brl(value) -> str:
+    try:
+        v = float(value or 0.0)
+    except Exception:
+        v = 0.0
+    return f"R$ {v:.2f}"
+
+
+def _find_thermal_printer_name():
+    """Tenta localizar automaticamente a impressora térmica USB no Windows."""
+    try:
+        if THERMAL_PRINTER_NAME:
+            return THERMAL_PRINTER_NAME
+        import win32print  # type: ignore
+        flags = win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
+        printers = win32print.EnumPrinters(flags)
+        names = []
+        for p in printers:
+            try:
+                names.append(str(p[2]))
+            except Exception:
+                continue
+        for cand in THERMAL_PRINTER_CANDIDATES:
+            for name in names:
+                if cand.lower() in name.lower():
+                    return name
+        try:
+            return win32print.GetDefaultPrinter()
+        except Exception:
+            return None
+    except Exception as ex:
+        logging.error("Falha ao localizar impressora térmica: %s", ex, exc_info=True)
+        return None
+
+
+def _wrap_thermal_line(label: str, value: str, width: int = THERMAL_MAX_CHARS):
+    label = str(label or '').strip()
+    value = str(value or '').strip()
+    prefix = f"{label}: " if label else ""
+    avail = max(8, int(width) - len(prefix))
+    chunks = textwrap.wrap(value, width=avail, break_long_words=True, break_on_hyphens=False) or [""]
+    lines = []
+    for idx, chunk in enumerate(chunks):
+        if idx == 0:
+            lines.append(prefix + chunk)
+        else:
+            lines.append(" " * len(prefix) + chunk)
+    return lines
+
+
+def _build_os_thermal_text(os_num, nome, cpf, telefone, descricao, valor):
+    agora = datetime.datetime.now()
+    width = THERMAL_MAX_CHARS
+    sep = "-" * width
+    lines = []
+    lines += [
+        "BESIM COMPANY",
+        "ORDEM DE SERVICO",
+        sep,
+        f"OS: {os_num}",
+    ]
+    lines += _wrap_thermal_line("Cliente", nome, width)
+    lines += _wrap_thermal_line("CPF", cpf, width)
+    lines += _wrap_thermal_line("Telefone", telefone, width)
+    lines += _wrap_thermal_line("Descricao", descricao, width)
+    lines += _wrap_thermal_line("Valor", _normalize_money_brl(valor), width)
+    lines += [
+        f"Data: {agora.strftime('%d/%m/%Y %H:%M:%S')}",
+        sep,
+        "Assinatura do cliente:",
+        "",
+        "________________________________________",
+        "",
+        "Obrigado pela preferencia!",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def imprimir_os_termica(os_num, nome, cpf, telefone, descricao, valor, printer_name: str = None):
+    """Impressão direta RAW/ESC-POS em impressora térmica USB no Windows."""
+    try:
+        import win32print  # type: ignore
+    except Exception as ex:
+        logging.error("pywin32 não disponível para impressão térmica: %s", ex, exc_info=True)
+        return False, "pywin32 não está instalado no Windows deste cliente."
+
+    try:
+        target = printer_name or _find_thermal_printer_name()
+        if not target:
+            return False, "Impressora térmica USB não encontrada."
+
+        texto = _build_os_thermal_text(os_num, nome, cpf, telefone, descricao, valor)
+        payload = bytearray()
+        payload += b"\x1b@"          # init
+        payload += b"\x1bt\x10"     # codepage Windows-1252/Latin (compatível na maioria das ESC/POS)
+        payload += b"\x1ba\x01"     # center
+        payload += b"\x1d!\x11"     # double height/width para título
+        payload += "BESIM COMPANY\n".encode("cp1252", errors="replace")
+        payload += b"\x1d!\x00"
+        payload += "ORDEM DE SERVICO\n\n".encode("cp1252", errors="replace")
+        payload += b"\x1ba\x00"     # left
+        payload += texto.encode("cp1252", errors="replace")
+        payload += b"\n\n\n"
+        payload += b"\x1dV\x00"     # corte total (ou avança/corta, depende do modelo)
+
+        hprinter = win32print.OpenPrinter(target)
+        try:
+            job = win32print.StartDocPrinter(hprinter, 1, (f"OS {os_num}", None, "RAW"))
+            try:
+                win32print.StartPagePrinter(hprinter)
+                win32print.WritePrinter(hprinter, bytes(payload))
+                win32print.EndPagePrinter(hprinter)
+            finally:
+                win32print.EndDocPrinter(hprinter)
+        finally:
+            win32print.ClosePrinter(hprinter)
+
+        logging.info("OS %s enviada para impressão térmica direta na impressora: %s", os_num, target)
+        return True, target
+    except Exception as ex:
+        logging.error("Falha ao imprimir OS na térmica: %s", ex, exc_info=True)
+        return False, str(ex)
+
+# ===================== FIM IMPRESSÃO TÉRMICA USB (OS) =====================
 
 # ===================== LOG =====================
 LOG_FILE = "sistema_loja_errors.log"
@@ -3193,7 +3338,7 @@ def gerar_cupom(cliente, produto, qtd, pagamento, total, cpf=None):
     bring_app_to_front()
     return nome_arquivo
 
-def gerar_os_pdf(os_num, nome, cpf, telefone, descricao, valor):
+def gerar_os_pdf(os_num, nome, cpf, telefone, descricao, valor, abrir_pdf: bool = True, imprimir_termica: bool = False):
     agora = datetime.datetime.now()
     pasta_os = os.path.join(os.getcwd(), "OS")
     os.makedirs(pasta_os, exist_ok=True)
@@ -3203,6 +3348,7 @@ def gerar_os_pdf(os_num, nome, cpf, telefone, descricao, valor):
     _pdf_draw_logo(c, x=40, y=730, w=260, h=90)
     t = c.beginText(40, 650)
     t.setFont("Helvetica", 12)
+
     linhas = [
         "BESIM COMPANY - ORDEM DE SERVIÇO",
         "----------------------------------------------"
@@ -3211,9 +3357,18 @@ def gerar_os_pdf(os_num, nome, cpf, telefone, descricao, valor):
         f"Cliente: {nome}",
         f"CPF: {cpf}",
         f"Telefone: {telefone}",
-        f"Descrição: {descricao}",
-        f"Valor: R$ {valor:.2f}",
-        f"Data: {agora.strftime('%d/%m/%Y')}",
+    ]
+    for bloco in textwrap.wrap(str(descricao or ''), width=75, break_long_words=True, break_on_hyphens=False) or ['']:
+        prefixo = 'Descrição: ' if bloco == (textwrap.wrap(str(descricao or ''), width=75, break_long_words=True, break_on_hyphens=False) or [''])[0] else ' ' * 11
+        linhas.append(prefixo + bloco)
+    linhas += [
+        f"Valor: {_normalize_money_brl(valor)}",
+        f"Data: {agora.strftime('%d/%m/%Y %H:%M:%S')}",
+        "",
+        "Assinatura do cliente:",
+        "",
+        "____________________________________________________________",
+        "",
         "----------------------------------------------"
         "----------------------------------------------",
     ]
@@ -3225,11 +3380,21 @@ def gerar_os_pdf(os_num, nome, cpf, telefone, descricao, valor):
         backup_pdf(nome_arquivo, "OS")
     except Exception as ex:
         logging.error("Erro ignorado: %s", ex, exc_info=True)
-    try:
-        open_in_default_app(nome_arquivo)
-    except Exception as ex:
-        logging.error("Erro ignorado: %s", ex, exc_info=True)
-    bring_app_to_front()
+
+    if imprimir_termica:
+        try:
+            ok_print, detalhe = imprimir_os_termica(os_num, nome, cpf, telefone, descricao, valor)
+            if not ok_print:
+                logging.warning("Impressão térmica da OS %s não concluída: %s", os_num, detalhe)
+        except Exception as ex:
+            logging.error("Erro na impressão térmica da OS %s: %s", os_num, ex, exc_info=True)
+
+    if abrir_pdf:
+        try:
+            open_in_default_app(nome_arquivo)
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
+        bring_app_to_front()
     return nome_arquivo
 # ================= RELATÓRIO VENDAS (PDF) =================
 def gerar_relatorio_vendas_dia_pdf(data_str: str = None, abrir_pdf: bool = True):
@@ -7228,10 +7393,18 @@ def abrir_sistema_com_logo(username, login_win):
                 (cpf, nome, telefone, desc, data, valor),
             )
         os_num = cursor.lastrowid
-        gerar_os_pdf(os_num, nome, cpf, telefone, desc, valor)
+        caminho_os_pdf = gerar_os_pdf(
+            os_num,
+            nome,
+            cpf,
+            telefone,
+            desc,
+            valor,
+            abrir_pdf=False,
+            imprimir_termica=AUTO_PRINT_OS,
+        )
 
         try:
-            caminho_os_pdf = os.path.join(os.getcwd(), 'OS', f"OS_{os_num}.pdf")
             telegram_notify(f"""🧾 <b>NOVA OS REGISTRADA</b>
         🧾 OS Nº: {os_num}
         👤 Cliente: {nome}
@@ -7252,7 +7425,10 @@ def abrir_sistema_com_logo(username, login_win):
         ent_tel_m.config(state="normal")
         ent_desc_m.delete(0, "end")
         ent_valor_m.delete(0, "end")
-        messagebox.showinfo("OS", "Ordem de serviço registrada!")
+        if AUTO_PRINT_OS:
+            messagebox.showinfo("OS", "Ordem de serviço registrada e enviada para a impressora térmica.")
+        else:
+            messagebox.showinfo("OS", "Ordem de serviço registrada!")
     btn_reg_manut = ttk.Button(
         f_m, text="Registrar Manutenção", command=cadastrar_manutencao
     )
