@@ -1,9 +1,12 @@
+VERSÃO 6.3
+
+MELHORIAS IMPLEMENTADAS NO SISTEMA
+- Filtro Aba Manutenção
+
 VERSÃO 6.1
 
 MELHORIAS IMPLEMENTADAS NO SISTEMA
 - Impressão de OS automatica
-
-
 
 VERSÃO 6.0
 
