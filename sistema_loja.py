@@ -595,7 +595,7 @@ class CFG:
     DISABLE_AUTO_UPDATE = False  # Evita que a atualização automática sobrescreva este patch
 
     # Versão / repositório
-    APP_VERSION = "6.1"
+    APP_VERSION = "6.3"
     OWNER = "andremariano07"
     REPO = "besim_company"
     BRANCH = "main"
@@ -7301,6 +7301,13 @@ def abrir_sistema_com_logo(username, login_win):
     ent_valor_m = ttk.Entry(f_m, width=18)
     ent_valor_m.grid(row=1, column=7, padx=6, pady=6)
     ent_valor_m.bind("<FocusOut>", lambda e: formatar_moeda(e, ent_valor_m))
+    # ===== FILTRO POR NOME =====
+    filtro_m_frame = ttk.Frame(aba_manutencao, padding=8)
+    filtro_m_frame.pack(fill="x", pady=6)
+    ttk.Label(filtro_m_frame, text="Filtrar por nome:").pack(side="left", padx=6)
+    filtro_nome_m_var = tk.StringVar()
+    ent_filtro_m = ttk.Entry(filtro_m_frame, textvariable=filtro_nome_m_var, width=30)
+    ent_filtro_m.pack(side="left", padx=6)
     tree_m_frame = ttk.Frame(aba_manutencao)
     tree_m_frame.pack(fill="both", expand=True, pady=8)
     tree_m = ttk.Treeview(
@@ -7333,11 +7340,15 @@ def abrir_sistema_com_logo(username, login_win):
     tree_m.configure(yscroll=scrollbar_m.set)
     scrollbar_m.pack(side="right", fill="y")
     @ui_safe('Manutenção')
-    def carregar_manutencao():
+    def carregar_manutencao(filtro=""):
         tree_m.delete(*tree_m.get_children())
-        for row in cursor.execute(
-            "SELECT os, nome, cpf, telefone, descricao, data, COALESCE(valor,0), COALESCE(aprovado,0) FROM manutencao ORDER BY os DESC"
-        ):
+        if filtro:
+            query = "SELECT os, nome, cpf, telefone, descricao, data, COALESCE(valor,0), COALESCE(aprovado,0) FROM manutencao WHERE nome LIKE ? ORDER BY os DESC"
+            rows = cursor.execute(query, (f"%{filtro}%",))
+        else:
+            query = "SELECT os, nome, cpf, telefone, descricao, data, COALESCE(valor,0), COALESCE(aprovado,0) FROM manutencao ORDER BY os DESC"
+            rows = cursor.execute(query)
+        for row in rows:
             aprovado_text = "Sim" if row[7] == 1 else "Não"
             tree_m.insert(
                 "",
@@ -7353,183 +7364,11 @@ def abrir_sistema_com_logo(username, login_win):
                     aprovado_text,
                 ),
             )
+    def ao_digitar_filtro_m(*args):
+        carregar_manutencao(filtro_nome_m_var.get())
+    filtro_nome_m_var.trace_add("write", ao_digitar_filtro_m)
     carregar_manutencao()
-    def buscar_cliente_m(event=None):
-        try:
-            cpf = ent_cpf_m.get().strip()
-            cursor.execute("SELECT nome, telefone FROM clientes WHERE cpf=?", (cpf,))
-            r = cursor.fetchone()
-            if r:
-                ent_nome_m.delete(0, "end")
-                ent_nome_m.insert(0, str(r[0] or ""))
-                ent_tel_m.delete(0, "end")
-                ent_tel_m.insert(0, str(r[1] or ""))
-        except Exception as ex:
-            logging.error(f"Falha ao buscar cliente (OS): {ex}", exc_info=True)
-    ttk.Button(f_m, text="Buscar Cliente", command=buscar_cliente_m).grid(
-        row=0, column=6, padx=6
-    )
-    @ui_safe('Manutenção')
-    def cadastrar_manutencao():
-        cpf = ent_cpf_m.get().strip()
-        nome = ent_nome_m.get().strip()
-        if not nome:
-            nome = "Sem Nome"
-        telefone = ent_tel_m.get().strip()
-        desc = ent_desc_m.get().strip()
-        valor_text = ent_valor_m.get().replace("R$", "").replace(",", ".").strip()
-        if not desc or not valor_text:
-            messagebox.showwarning("Atenção", "Informe descrição e um valor válido")
-            return
-        try:
-            valor = float(valor_text)
-        except ValueError:
-            messagebox.showerror("Erro", "Valor inválido")
-            return
-        data = today_br()
-        with conn:
-            cursor.execute(
-                "INSERT INTO manutencao(cpf,nome,telefone,descricao,data,valor) VALUES (?,?,?,?,?,?)",
-                (cpf, nome, telefone, desc, data, valor),
-            )
-        os_num = cursor.lastrowid
-        caminho_os_pdf = gerar_os_pdf(
-            os_num,
-            nome,
-            cpf,
-            telefone,
-            desc,
-            valor,
-            abrir_pdf=False,
-            imprimir_termica=AUTO_PRINT_OS,
-        )
-
-        try:
-            telegram_notify(f"""🧾 <b>NOVA OS REGISTRADA</b>
-        🧾 OS Nº: {os_num}
-        👤 Cliente: {nome}
-        📞 Tel: {telefone}
-        📝 Desc: {desc}
-        💰 Valor: R$ {valor:.2f}
-        📅 🕒 {data} {datetime.datetime.now().strftime("%H:%M:%S")}""", dedupe_key=f"os_nova_{os_num}", dedupe_window_sec=120)
-            telegram_send_pdf(f"🧾 OS Nº {os_num}", caminho_os_pdf, dedupe_key=f"os_pdf_{os_num}", dedupe_window_sec=300)
-        except Exception as ex:
-            logging.error("Erro ignorado: %s", ex, exc_info=True)
-        carregar_manutencao()
-        ent_cpf_m.delete(0, "end")
-        ent_nome_m.config(state="normal")
-        ent_nome_m.delete(0, "end")
-        ent_nome_m.config(state="normal")
-        ent_tel_m.config(state="normal")
-        ent_tel_m.delete(0, "end")
-        ent_tel_m.config(state="normal")
-        ent_desc_m.delete(0, "end")
-        ent_valor_m.delete(0, "end")
-        if AUTO_PRINT_OS:
-            messagebox.showinfo("OS", "Ordem de serviço registrada e enviada para a impressora térmica.")
-        else:
-            messagebox.showinfo("OS", "Ordem de serviço registrada!")
-    btn_reg_manut = ttk.Button(
-        f_m, text="Registrar Manutenção", command=cadastrar_manutencao
-    )
-    btn_reg_manut.grid(row=2, column=0, columnspan=2, pady=8)
-    @ui_safe('Manutenção')
-    def excluir_manutencao():
-        if not is_admin(username):
-            messagebox.showerror(
-                "Permissão negada", "Somente o administrador pode excluir manutenções."
-            )
-            return
-        selected = tree_m.selection()
-        if not selected:
-            messagebox.showwarning("Atenção", "Selecione uma OS para excluir.")
-            return
-        item_id = selected[0]
-        os_num = tree_m.item(item_id)["values"][0]
-        if messagebox.askyesno("Excluir OS", f"Deseja excluir a OS {os_num}?"):
-            with conn:
-                cursor.execute("DELETE FROM manutencao WHERE os=?", (os_num,))
-            carregar_manutencao()
-    btn_excluir_manut = ttk.Button(
-        f_m, text="Excluir Manutenção", command=excluir_manutencao
-    )
-    btn_excluir_manut.grid(row=2, column=2, columnspan=2, pady=8)
-    if not is_admin(username):
-        btn_excluir_manut.state(["disabled"])
-    @ui_safe('Manutenção')
-    def aprovar_manutencao():
-        selected = tree_m.selection()
-        if not selected:
-            messagebox.showwarning(
-                "Atenção", "Selecione a OS que será aprovada na lista."
-            )
-            return
-        item_id = selected[0]
-        os_num = tree_m.item(item_id)["values"][0]
-        hoje = today_br()
-        hora = datetime.datetime.now().strftime("%H:%M:%S")
-        cursor.execute(
-            "SELECT COALESCE(valor,0), COALESCE(aprovado,0) FROM manutencao WHERE os=?",
-            (os_num,), # sempre tupla
-        )
-        r = cursor.fetchone()
-        if not r:
-            messagebox.showerror("Erro", "OS não encontrada.")
-            return
-        valor, aprovado = r
-        if aprovado == 1:
-            messagebox.showinfo("Info", f"A OS {os_num} já foi aprovada.")
-
-            try:
-                telegram_notify(f"""🛠️ <b>OS APROVADA</b>
-            🧾 OS Nº: {os_num}
-            💰 Valor: R$ {valor:.2f}
-            🕒 {hoje} {hora}""", dedupe_key=f"os_aprovada_{os_num}", dedupe_window_sec=300)
-            except Exception as ex:
-                logging.error("Erro ignorado: %s", ex, exc_info=True)
-            return
-        if valor <= 0:
-            messagebox.showwarning("Atenção", "Valor inválido para aprovar.")
-            return
-        try:
-            with conn:
-                # >>> ATUALIZADO: grava hora na entrada do caixa (motivo NULL)
-                # Motivo da entrada (OS aprovada) — robusto
-                _nome_os = str(locals().get('nome') or locals().get('cliente') or locals().get('nome_cliente') or '').strip()
-                if not _nome_os:
-                    try:
-                        _nome_os = str(ent_nome_m.get() or '').strip()
-                    except Exception:
-                        _nome_os = ''
-                motivo_caixa = f"OS {os_num} aprovada" + (f" - {_nome_os}" if _nome_os else "")
-                motivo_caixa = (motivo_caixa or '').strip()[:90]
-                try:
-                    cursor.execute(
-                        "INSERT INTO caixa(valor,data,hora,motivo) VALUES (?,?,?,?)",
-                        (valor, hoje, hora, motivo_caixa),
-                    )
-                except Exception:
-                    cursor.execute(
-                        "INSERT INTO caixa(valor,data,hora) VALUES (?,?,?)",
-                        (valor, hoje, hora),
-                    )
-                cursor.execute(
-                    "UPDATE manutencao SET aprovado=1 WHERE os=?", (os_num,)
-                ) # vírgula aqui
-            carregar_manutencao()
-            atualizar_caixa()
-            messagebox.showinfo(
-                "Aprovado",
-                f"OS {os_num} aprovada. R$ {valor:.2f} adicionados ao caixa.",
-            )
-        except Exception as ex:
-            logging.error("Falha ao aprovar manutenção", exc_info=True)
-            messagebox.showerror("Erro", f"Falha ao aprovar manutenção:\n{ex}")
-    # Cria o botão APÓS definir a função
-    btn_aprovar_manut = ttk.Button(
-        f_m, text="Manutenção Aprovada", command=aprovar_manutencao
-    )
-    btn_aprovar_manut.grid(row=2, column=4, columnspan=2, pady=8)
+    
     # ====== DEVOLUÇÃO ======
     f_d = ttk.Frame(aba_devolucao, padding=8)
     f_d.pack(fill="x", pady=6)
@@ -8132,3 +7971,81 @@ if __name__ == "__main__":
                 pass
         except Exception:
             pass
+
+
+
+def aba_manutencao(frame):
+    for widget in frame.winfo_children():
+        widget.destroy()
+
+    filtro_frame = tk.Frame(frame)
+    filtro_frame.pack(fill="x", padx=10, pady=5)
+
+    tk.Label(filtro_frame, text="Filtrar por nome:").pack(side="left")
+
+    filtro_nome_var = tk.StringVar()
+    filtro_entry = tk.Entry(filtro_frame, textvariable=filtro_nome_var, width=30)
+    filtro_entry.pack(side="left", padx=5)
+
+    colunas = ("OS", "Nome", "CPF", "Telefone", "Descrição", "Data", "Valor", "Aprovado")
+    tree = ttk.Treeview(frame, columns=colunas, show="headings")
+
+    for col in colunas:
+        tree.heading(col, text=col)
+        tree.column(col, anchor="center")
+
+    tree.pack(fill="both", expand=True, padx=10, pady=10)
+
+    def carregar_dados(filtro_nome=""):
+        tree.delete(*tree.get_children())
+
+        try:
+            if filtro_nome:
+                cursor.execute("""
+                    SELECT os, nome, cpf, telefone, descricao, data, valor, aprovado
+                    FROM manutencao
+                    WHERE nome LIKE ?
+                    ORDER BY os DESC
+                """, (f"%{filtro_nome}%",))
+            else:
+                cursor.execute("""
+                    SELECT os, nome, cpf, telefone, descricao, data, valor, aprovado
+                    FROM manutencao
+                    ORDER BY os DESC
+                """)
+
+            for row in cursor.fetchall():
+                tree.insert("", "end", values=row)
+
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao carregar dados:\n{e}")
+
+    def ao_digitar(*args):
+        carregar_dados(filtro_nome_var.get())
+
+    filtro_nome_var.trace_add("write", ao_digitar)
+
+    carregar_dados()
+
+
+# ===== FILTRO MANUTENÇÃO (SAFE PATCH) =====
+def aplicar_filtro_manutencao(tree, filtro_nome):
+    try:
+        tree.delete(*tree.get_children())
+        if filtro_nome:
+            cursor.execute("""
+                SELECT os, nome, cpf, telefone, descricao, data, valor, aprovado
+                FROM manutencao
+                WHERE nome LIKE ?
+                ORDER BY os DESC
+            """, (f"%{filtro_nome}%",))
+        else:
+            cursor.execute("""
+                SELECT os, nome, cpf, telefone, descricao, data, valor, aprovado
+                FROM manutencao
+                ORDER BY os DESC
+            """)
+        for row in cursor.fetchall():
+            tree.insert("", "end", values=row)
+    except Exception as e:
+        print("Erro filtro:", e)
