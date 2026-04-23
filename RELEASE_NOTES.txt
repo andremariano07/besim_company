@@ -1,3 +1,9 @@
+VERSÃO 6.4
+
+MELHORIAS IMPLEMENTADAS NO SISTEMA
+- Corrigido BUG da aba manutenção que ocultava os botões
+
+
 VERSÃO 6.3
 
 MELHORIAS IMPLEMENTADAS NO SISTEMA
