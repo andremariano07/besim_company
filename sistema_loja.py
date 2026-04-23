@@ -433,7 +433,7 @@ def _install_global_statusbar_hook():
                 logging.error("Erro ignorado: %s", ex, exc_info=True)
             # Cria container
             bar = tk.Frame(win, bd=1, relief='flat')
-            bar.pack(side='bottom', fill='x', pady=(0, 4))
+            bar.pack(side='bottom', fill='x', pady=(0, 10))
 
             # Esquerda: versão + licença
             lbl_left = tk.Label(bar, text=_statusbar_text_version_and_license(), anchor='w', padx=10)
@@ -523,6 +523,74 @@ except Exception as ex:
     logging.error("Erro ignorado: %s", ex, exc_info=True)
 # =================== FIM STATUSBAR GLOBAL ===================
 
+# ===================== STATUSBAR PARA ABAS =====================
+def add_tab_statusbar(tab_frame):
+    """Adiciona status bar no final de uma aba (tab), com horário, dias restantes da licença e usuário logado."""
+    try:
+        # Frame do status bar
+        status_frame = tk.Frame(tab_frame, bd=1, relief='flat')
+        status_frame.pack(side='bottom', fill='x', pady=(5, 0))
+
+        # Labels
+        lbl_time = tk.Label(status_frame, text='', anchor='w', padx=5)
+        lbl_time.pack(side='left')
+
+        lbl_license = tk.Label(status_frame, text='', anchor='center', padx=5)
+        lbl_license.pack(side='left')
+
+        lbl_user = tk.Label(status_frame, text='', anchor='e', padx=5)
+        lbl_user.pack(side='right')
+
+        # Função para atualizar
+        def update_status():
+            try:
+                # Horário
+                now_str = datetime.datetime.now().strftime('%H:%M:%S')
+                lbl_time.config(text=f'Horário: {now_str}')
+
+                # Licença
+                lic_str = get_tempo_restante_licenca_str()
+                lbl_license.config(text=lic_str)
+
+                # Usuário
+                user_str = f'Usuário: {CURRENT_USER}' if CURRENT_USER else 'Usuário: N/A'
+                lbl_user.config(text=user_str)
+
+                # Aplicar tema
+                if 'current_theme' in globals() and isinstance(globals().get('current_theme'), dict):
+                    pal = globals().get('current_theme')
+                    bg = pal.get('panel') or pal.get('bg')
+                    fg = pal.get('muted') or pal.get('text')
+                    if bg:
+                        status_frame.configure(bg=bg)
+                        lbl_time.configure(bg=bg)
+                        lbl_license.configure(bg=bg)
+                        lbl_user.configure(bg=bg)
+                    if fg:
+                        lbl_time.configure(fg=fg)
+                        lbl_license.configure(fg=fg)
+                        lbl_user.configure(fg=fg)
+
+            except Exception as ex:
+                logging.error("Erro ao atualizar status bar da aba: %s", ex, exc_info=True)
+
+        # Atualização inicial e periódica
+        update_status()
+        tab_frame.after(1000, lambda: periodic_update(tab_frame, update_status))
+
+    except Exception as ex:
+        logging.error("Erro ao adicionar status bar na aba: %s", ex, exc_info=True)
+
+def periodic_update(tab_frame, update_func):
+    """Atualiza periodicamente o status bar da aba."""
+    try:
+        update_func()
+        tab_frame.after(1000, lambda: periodic_update(tab_frame, update_func))
+    except Exception as ex:
+        logging.error("Erro na atualização periódica: %s", ex, exc_info=True)
+
+# =================== FIM STATUSBAR PARA ABAS ===================
+
 # --- FORÇA STATUSBAR NA JANELA PRINCIPAL (fallback) ---
 # Em alguns ambientes o hook global pode não anexar por timing/tema.
 # Este fallback cria/mostra o rodapé explicitamente quando chamado.
@@ -537,7 +605,7 @@ def force_attach_statusbar(win):
                 bar.pack_forget()
             except Exception as ex:
                 logging.error("Erro ignorado: %s", ex, exc_info=True)
-            bar.pack(side='bottom', fill='x', pady=(0, 4))
+            bar.pack(side='bottom', fill='x', pady=(0, 10))
             try:
                 bar.lift()
             except Exception as ex:
@@ -545,7 +613,7 @@ def force_attach_statusbar(win):
             return
         # Caso não exista, cria igual ao hook, porém com altura/relief para ficar visível
         bar = tk.Frame(win, bd=1, relief='groove')
-        bar.pack(side='bottom', fill='x', pady=(0, 4))
+        bar.pack(side='bottom', fill='x', pady=(0, 10))
         lbl_left = tk.Label(bar, text=_statusbar_text_version_and_license(), anchor='w', padx=10)
         lbl_left.pack(side='left')
         lbl_clock = tk.Label(bar, text='', anchor='e', padx=10)
@@ -595,7 +663,7 @@ class CFG:
     DISABLE_AUTO_UPDATE = False  # Evita que a atualização automática sobrescreva este patch
 
     # Versão / repositório
-    APP_VERSION = "6.3"
+    APP_VERSION = "6.4"
     OWNER = "andremariano07"
     REPO = "besim_company"
     BRANCH = "main"
@@ -618,6 +686,9 @@ REPO = CFG.REPO
 BRANCH = CFG.BRANCH
 VERSION_FILE = CFG.VERSION_FILE
 DB_PATH = CFG.DB_PATH
+
+# Usuário logado atual
+CURRENT_USER = None
 IGNORE_FILES = CFG.IGNORE_FILES
 IGNORE_DIRS = CFG.IGNORE_DIRS
 GOOGLE_DRIVE_BACKUP = CFG.GOOGLE_DRIVE_BACKUP
@@ -2284,6 +2355,8 @@ def montar_aba_ferramentas(abas: ttk.Notebook, root_win):
             add_tooltip(btn, 'Abrir ' + str(p.get('nome','Programa')))
         except Exception as ex:
             logging.error("Erro ignorado: %s", ex, exc_info=True)
+    # Adicionar status bar na aba Ferramentas
+    add_tab_statusbar(aba_ferramentas)
     return aba_ferramentas
 
 # ===================== FIM FERRAMENTAS =====================
@@ -4290,6 +4363,8 @@ def montar_aba_resumo_dashboard(abas: ttk.Notebook, conn: sqlite3.Connection, cu
         abas.bind("<<NotebookTabChanged>>", _on_tab_changed, add=True)
     except Exception as ex:
         logging.error("Erro ignorado: %s", ex, exc_info=True)
+    # Adicionar status bar na aba Resumo
+    add_tab_statusbar(aba_resumo)
     return aba_resumo
 
 # ================= FIM DASHBOARD =================
@@ -4397,10 +4472,13 @@ def reorder_notebook_tabs_alphabetical(abas: 'ttk.Notebook'):
 
 # ================= SISTEMA PRINCIPAL =================
 def abrir_sistema_com_logo(username, login_win):
+    global CURRENT_USER
+    CURRENT_USER = username
     root = tk.Toplevel()
     root.title(f"BESIM COMPANY - Usuário: {username} ")
-    root.geometry("1280x720")
-    root.minsize(1100, 600)
+    root.geometry("1920x1200")
+    root.minsize(1400, 800)
+    root.state('zoomed')  # Maximize the window for 1920x1080 resolution
     root.lift()
     root.focus_force()
     root.attributes("-topmost", True)
@@ -4974,6 +5052,9 @@ def abrir_sistema_com_logo(username, login_win):
             tree_upgrades.insert("", "end", values=(hora, cliente, produto, (pagamento or "").replace("Upgrade - ", ""), f"R$ {total:.2f}"))
         apply_zebra(tree_upgrades)
     
+    # Adicionar status bar na aba Upgrade
+    add_tab_statusbar(aba_upgrade)
+    
     # ====== AGENDAMENTO (retirada de celulares) ======
     # UI: AGENDAMENTO
     ag_state = {"year": datetime.date.today().year, "month": datetime.date.today().month}
@@ -5269,6 +5350,8 @@ def abrir_sistema_com_logo(username, login_win):
     # Notifica no Telegram se houver agendamento para HOJE (ao abrir)
     start_agendamento_notify_on_open(root)
     start_devedores_notify_on_open(root)
+    # Adicionar status bar na aba Agendamento
+    add_tab_statusbar(aba_agendamento)
 # ====== ESTOQUE ======
     est_top = ttk.Frame(aba_estoque)
     est_top.pack(fill="both", expand=True)
@@ -5523,6 +5606,8 @@ def abrir_sistema_com_logo(username, login_win):
     btn_del_prod.pack(side="left", padx=6)
     if not is_admin(username):
         btn_del_prod.state(["disabled"])
+    # Adicionar status bar na aba Estoque
+    add_tab_statusbar(aba_estoque)
     # ====== CLIENTES ======
     # -- TABELA --
     frame_cli = ttk.Frame(aba_clientes)
@@ -5678,7 +5763,8 @@ def abrir_sistema_com_logo(username, login_win):
     )
     carregar_clientes()
     
-
+    # Adicionar status bar na aba Clientes
+    add_tab_statusbar(aba_clientes)
     
 # ====== DEVEDORES ======
     dev_top = ttk.Frame(aba_devedores)
@@ -6086,6 +6172,9 @@ def abrir_sistema_com_logo(username, login_win):
 
     carregar_devedores()
 
+    # Adicionar status bar na aba Devedores
+    add_tab_statusbar(aba_devedores)
+
 # ====== PONTUAÇÃO ======
     pt_top = ttk.Frame(aba_pontuacao, padding=8)
     pt_top.pack(fill="x", pady=(0, 6))
@@ -6258,6 +6347,8 @@ def abrir_sistema_com_logo(username, login_win):
         carregar_pontuacao()
     except Exception as ex:
         logging.error("Erro ignorado: %s", ex, exc_info=True)
+    # Adicionar status bar na aba Pontuação
+    add_tab_statusbar(aba_pontuacao)
 # ====== VENDAS ======
     f_v = ttk.Frame(aba_vendas, padding=8)
     f_v.pack(fill="x", pady=6)
@@ -6848,6 +6939,8 @@ def abrir_sistema_com_logo(username, login_win):
         carregar_vendas_dia()
     except Exception as ex:
         logging.error("Erro ignorado: %s", ex, exc_info=True)
+    # Adicionar status bar na aba Vendas
+    add_tab_statusbar(aba_vendas)
 # ====== CAIXA ======
     f_cx = ttk.Frame(aba_caixa, padding=8)
     f_cx.pack(fill="both", expand=True)
@@ -7281,6 +7374,9 @@ def abrir_sistema_com_logo(username, login_win):
         logging.error("Erro ignorado: %s", ex, exc_info=True)
     # --- Fim do rodapé da aba Caixa ---
 
+    # Adicionar status bar na aba Caixa
+    add_tab_statusbar(aba_caixa)
+
     # ====== MANUTENÇÃO ======
     f_m = ttk.Frame(aba_manutencao, padding=8)
     f_m.pack(fill="x", pady=6)
@@ -7368,7 +7464,183 @@ def abrir_sistema_com_logo(username, login_win):
         carregar_manutencao(filtro_nome_m_var.get())
     filtro_nome_m_var.trace_add("write", ao_digitar_filtro_m)
     carregar_manutencao()
-    
+    def buscar_cliente_m(event=None):
+        try:
+            cpf = ent_cpf_m.get().strip()
+            cursor.execute("SELECT nome, telefone FROM clientes WHERE cpf=?", (cpf,))
+            r = cursor.fetchone()
+            if r:
+                ent_nome_m.delete(0, "end")
+                ent_nome_m.insert(0, str(r[0] or ""))
+                ent_tel_m.delete(0, "end")
+                ent_tel_m.insert(0, str(r[1] or ""))
+        except Exception as ex:
+            logging.error(f"Falha ao buscar cliente (OS): {ex}", exc_info=True)
+    ttk.Button(f_m, text="Buscar Cliente", command=buscar_cliente_m).grid(
+        row=0, column=6, padx=6
+    )
+    @ui_safe('Manutenção')
+    def cadastrar_manutencao():
+        cpf = ent_cpf_m.get().strip()
+        nome = ent_nome_m.get().strip()
+        if not nome:
+            nome = "Sem Nome"
+        telefone = ent_tel_m.get().strip()
+        desc = ent_desc_m.get().strip()
+        valor_text = ent_valor_m.get().replace("R$", "").replace(",", ".").strip()
+        if not desc or not valor_text:
+            messagebox.showwarning("Atenção", "Informe descrição e um valor válido")
+            return
+        try:
+            valor = float(valor_text)
+        except ValueError:
+            messagebox.showerror("Erro", "Valor inválido")
+            return
+        data = today_br()
+        with conn:
+            cursor.execute(
+                "INSERT INTO manutencao(cpf,nome,telefone,descricao,data,valor) VALUES (?,?,?,?,?,?)",
+                (cpf, nome, telefone, desc, data, valor),
+            )
+        os_num = cursor.lastrowid
+        caminho_os_pdf = gerar_os_pdf(
+            os_num,
+            nome,
+            cpf,
+            telefone,
+            desc,
+            valor,
+            abrir_pdf=False,
+            imprimir_termica=AUTO_PRINT_OS,
+        )
+
+        try:
+            telegram_notify(f"""🧾 <b>NOVA OS REGISTRADA</b>
+        🧾 OS Nº: {os_num}
+        👤 Cliente: {nome}
+        📞 Tel: {telefone}
+        📝 Desc: {desc}
+        💰 Valor: R$ {valor:.2f}
+        📅 🕒 {data} {datetime.datetime.now().strftime("%H:%M:%S")}""", dedupe_key=f"os_nova_{os_num}", dedupe_window_sec=120)
+            telegram_send_pdf(f"🧾 OS Nº {os_num}", caminho_os_pdf, dedupe_key=f"os_pdf_{os_num}", dedupe_window_sec=300)
+        except Exception as ex:
+            logging.error("Erro ignorado: %s", ex, exc_info=True)
+        carregar_manutencao()
+        ent_cpf_m.delete(0, "end")
+        ent_nome_m.config(state="normal")
+        ent_nome_m.delete(0, "end")
+        ent_nome_m.config(state="normal")
+        ent_tel_m.config(state="normal")
+        ent_tel_m.delete(0, "end")
+        ent_tel_m.config(state="normal")
+        ent_desc_m.delete(0, "end")
+        ent_valor_m.delete(0, "end")
+        if AUTO_PRINT_OS:
+            messagebox.showinfo("OS", "Ordem de serviço registrada e enviada para a impressora térmica.")
+        else:
+            messagebox.showinfo("OS", "Ordem de serviço registrada!")
+    btn_reg_manut = ttk.Button(
+        f_m, text="Registrar Manutenção", command=cadastrar_manutencao
+    )
+    btn_reg_manut.grid(row=2, column=0, columnspan=2, pady=8)
+    @ui_safe('Manutenção')
+    def excluir_manutencao():
+        if not is_admin(username):
+            messagebox.showerror(
+                "Permissão negada", "Somente o administrador pode excluir manutenções."
+            )
+            return
+        selected = tree_m.selection()
+        if not selected:
+            messagebox.showwarning("Atenção", "Selecione uma OS para excluir.")
+            return
+        item_id = selected[0]
+        os_num = tree_m.item(item_id)["values"][0]
+        if messagebox.askyesno("Excluir OS", f"Deseja excluir a OS {os_num}?"):
+            with conn:
+                cursor.execute("DELETE FROM manutencao WHERE os=?", (os_num,))
+            carregar_manutencao()
+    btn_excluir_manut = ttk.Button(
+        f_m, text="Excluir Manutenção", command=excluir_manutencao
+    )
+    btn_excluir_manut.grid(row=2, column=2, columnspan=2, pady=8)
+    if not is_admin(username):
+        btn_excluir_manut.state(["disabled"])
+    @ui_safe('Manutenção')
+    def aprovar_manutencao():
+        selected = tree_m.selection()
+        if not selected:
+            messagebox.showwarning(
+                "Atenção", "Selecione a OS que será aprovada na lista."
+            )
+            return
+        item_id = selected[0]
+        os_num = tree_m.item(item_id)["values"][0]
+        hoje = today_br()
+        hora = datetime.datetime.now().strftime("%H:%M:%S")
+        cursor.execute(
+            "SELECT COALESCE(valor,0), COALESCE(aprovado,0) FROM manutencao WHERE os=?",
+            (os_num,),
+        )
+        r = cursor.fetchone()
+        if not r:
+            messagebox.showerror("Erro", "OS não encontrada.")
+            return
+        valor, aprovado = r
+        if aprovado == 1:
+            messagebox.showinfo("Info", f"A OS {os_num} já foi aprovada.")
+
+            try:
+                telegram_notify(f"""🛠️ <b>OS APROVADA</b>
+            🧾 OS Nº: {os_num}
+            💰 Valor: R$ {valor:.2f}
+            🕒 {hoje} {hora}""", dedupe_key=f"os_aprovada_{os_num}", dedupe_window_sec=300)
+            except Exception as ex:
+                logging.error("Erro ignorado: %s", ex, exc_info=True)
+            return
+        if valor <= 0:
+            messagebox.showwarning("Atenção", "Valor inválido para aprovar.")
+            return
+        try:
+            with conn:
+                _nome_os = str(locals().get('nome') or locals().get('cliente') or locals().get('nome_cliente') or '').strip()
+                if not _nome_os:
+                    try:
+                        _nome_os = str(ent_nome_m.get() or '').strip()
+                    except Exception:
+                        _nome_os = ''
+                motivo_caixa = f"OS {os_num} aprovada" + (f" - {_nome_os}" if _nome_os else "")
+                motivo_caixa = (motivo_caixa or '').strip()[:90]
+                try:
+                    cursor.execute(
+                        "INSERT INTO caixa(valor,data,hora,motivo) VALUES (?,?,?,?)",
+                        (valor, hoje, hora, motivo_caixa),
+                    )
+                except Exception:
+                    cursor.execute(
+                        "INSERT INTO caixa(valor,data,hora) VALUES (?,?,?)",
+                        (valor, hoje, hora),
+                    )
+                cursor.execute(
+                    "UPDATE manutencao SET aprovado=1 WHERE os=?", (os_num,)
+                )
+            carregar_manutencao()
+            atualizar_caixa()
+            messagebox.showinfo(
+                "Aprovado",
+                f"OS {os_num} aprovada. R$ {valor:.2f} adicionados ao caixa.",
+            )
+        except Exception as ex:
+            logging.error("Falha ao aprovar manutenção", exc_info=True)
+            messagebox.showerror("Erro", f"Falha ao aprovar manutenção:\n{ex}")
+    btn_aprovar_manut = ttk.Button(
+        f_m, text="Manutenção Aprovada", command=aprovar_manutencao
+    )
+    btn_aprovar_manut.grid(row=2, column=4, columnspan=2, pady=8)
+
+    # Adicionar status bar na aba Manutenção
+    add_tab_statusbar(aba_manutencao)
+
     # ====== DEVOLUÇÃO ======
     f_d = ttk.Frame(aba_devolucao, padding=8)
     f_d.pack(fill="x", pady=6)
@@ -7476,6 +7748,8 @@ def abrir_sistema_com_logo(username, login_win):
         row=2, column=0, pady=10, sticky="w", padx=6
     )
     carregar_devolucoes()
+    # Adicionar status bar na aba Devolução
+    add_tab_statusbar(aba_devolucao)
     # ---- Funções de UI: toast e agendador de backup ----
     def _show_toast_backup(text: str, level: str = 'info'):
         """Toast de backup (não interfere na lógica de backup)."""
@@ -7513,7 +7787,7 @@ def abrir_sistema_com_logo(username, login_win):
         logging.error("Erro ignorado: %s", ex, exc_info=True)
     # ====== STATUS BAR (versão | backup | usuário | data/hora) ======
     statusbar = tk.Frame(root, bg=palette['panel'], highlightbackground=palette['border'], highlightthickness=1)
-    statusbar.pack(side='bottom', fill='x', pady=(0, 4))
+    statusbar.pack(side='bottom', fill='x', pady=(0, 10))
 
     lbl_status_left = tk.Label(statusbar, text=f"v{get_local_version()}", bg=palette['panel'], fg=palette['muted'], font=("Segoe UI", 9))
     lbl_status_left.pack(side='left', padx=10, pady=6)
@@ -7558,9 +7832,9 @@ def abrir_login():
     """Tela de login (moderna): card arredondado via PIL, hover no botão, olho (ícone) e fade-in."""
     login_win = tk.Tk()
     login_win.title("Login - BESIM COMPANY")
-    login_win.geometry("560x380")
-    login_win.minsize(560, 380)
-    login_win.resizable(False, False)
+    login_win.geometry("1920x1080")
+    login_win.minsize(1024, 700)
+    login_win.resizable(True, True)
 
     setup_global_exception_handlers(login_win)
     _bind_fullscreen_shortcuts(login_win)
@@ -7597,7 +7871,7 @@ def abrir_login():
         pass
 
     # ---------- Helpers visuais (PIL) ----------
-    def _mk_card_images(w=430, h=280, radius=22):
+    def _mk_card_images(w=600, h=380, radius=28):
         """Gera (shadow_img, card_img) como PhotoImage."""
         try:
             from PIL import Image, ImageDraw, ImageFilter
@@ -7628,7 +7902,7 @@ def abrir_login():
             logging.error("Falha ao gerar card arredondado: %s", ex, exc_info=True)
             return None, None
 
-    def _mk_eye_icon(size=18, color_hex="#c7c7c7"):
+    def _mk_eye_icon(size=24, color_hex="#c7c7c7"):
         """Ícone de olho simples (PIL) para o botão."""
         try:
             from PIL import Image, ImageDraw
@@ -7656,14 +7930,14 @@ def abrir_login():
     root.pack(fill="both", expand=True)
 
     # ---------- Card (imagem) ----------
-    shadow_img, card_img = _mk_card_images(440, 285, radius=22)
+    shadow_img, card_img = _mk_card_images(600, 380, radius=28)
 
     card_holder = tk.Frame(root, bg=pal["bg"])
-    card_holder.place(relx=0.5, rely=0.48, anchor="center")
+    card_holder.place(relx=0.5, rely=0.42, anchor="center")
 
     # IMPORTANTE: não misturar pack/place no mesmo container.
     # Criamos um "stack" fixo e usamos apenas PLACE dentro dele.
-    stack = tk.Frame(card_holder, bg=pal["bg"], width=440+36, height=285+36)
+    stack = tk.Frame(card_holder, bg=pal["bg"], width=600+36, height=380+36)
     stack.pack()
     try:
         stack.pack_propagate(False)
@@ -7682,15 +7956,15 @@ def abrir_login():
     else:
         # fallback sem imagem (card simples)
         card_layer = tk.Frame(stack, bg=pal["panel"], highlightbackground=pal["border"], highlightthickness=1)
-        card_layer.place(x=18, y=18, width=440, height=285)
+        card_layer.place(x=18, y=18, width=600, height=380)
 
     # Frame real para conteúdo (em cima do card)
     content = tk.Frame(stack, bg=pal["panel"])
-    content.place(x=18+18, y=18+16, width=440-36, height=285-32)
+    content.place(x=18+18, y=18+16, width=600-36, height=380-32)
 
     # Header
     header = tk.Frame(content, bg=pal["panel"])
-    header.pack(fill="x", pady=(8, 8))
+    header.pack(fill="x", pady=(12, 12))
 
     # Logo
     logo_path = str(P("logo.png"))
@@ -7698,7 +7972,7 @@ def abrir_login():
     if os.path.isfile(logo_path):
         try:
             img = Image.open(logo_path).convert("RGBA")
-            max_w, max_h = 190, 54
+            max_w, max_h = 240, 70
             w0, h0 = img.size
             scale = min(max_w / max(w0, 1), max_h / max(h0, 1))
             img = img.resize((max(1, int(w0 * scale)), max(1, int(h0 * scale))))
@@ -7707,18 +7981,18 @@ def abrir_login():
             logging.error("Falha ao carregar logo do login: %s", ex, exc_info=True)
 
     if _logo_img:
-        tk.Label(header, image=_logo_img, bg=pal["panel"]).pack(pady=(4, 2))
+        tk.Label(header, image=_logo_img, bg=pal["panel"]).pack(pady=(6, 4))
         header._logo_img = _logo_img
     else:
         tk.Label(header, text="BESIM COMPANY", bg=pal["panel"], fg=pal["text"],
-                 font=("Segoe UI", 16, "bold")).pack(pady=(4, 2))
+                 font=("Segoe UI", 18, "bold")).pack(pady=(6, 4))
 
     tk.Label(header, text="Entre para continuar", bg=pal["panel"], fg=pal["muted"],
-             font=("Segoe UI", 10)).pack()
+             font=("Segoe UI", 12)).pack()
 
     # Corpo
     body = tk.Frame(content, bg=pal["panel"])
-    body.pack(fill="both", expand=True, padx=22, pady=(8, 12))
+    body.pack(fill="both", expand=True, padx=28, pady=(12, 16))
 
     # lembrar usuário
     remember_path = os.path.join(os.getcwd(), "remember_user.txt")
@@ -7747,28 +8021,28 @@ def abrir_login():
             logging.error("Erro ao limpar lembrar usuário: %s", ex, exc_info=True)
 
     # Labels/Entries (tk para controle fino do visual)
-    lbl1 = tk.Label(body, text="Usuário", bg=pal["panel"], fg=pal["muted"], font=("Segoe UI", 10, "bold"))
-    lbl1.pack(anchor="w", pady=(0, 4))
+    lbl1 = tk.Label(body, text="Usuário", bg=pal["panel"], fg=pal["muted"], font=("Segoe UI", 12, "bold"))
+    lbl1.pack(anchor="w", pady=(0, 6))
 
     ent_user = tk.Entry(body, bd=0, relief="flat", highlightthickness=1,
                         highlightbackground=pal["border"], highlightcolor=pal["accent"],
                         bg=pal["panel2"], fg=pal["text"], insertbackground=pal["text"],
-                        font=("Segoe UI", 11))
-    ent_user.pack(fill="x", ipady=10, pady=(0, 12))
+                        font=("Segoe UI", 13))
+    ent_user.pack(fill="x", ipady=14, pady=(0, 16))
 
-    lbl2 = tk.Label(body, text="Senha", bg=pal["panel"], fg=pal["muted"], font=("Segoe UI", 10, "bold"))
-    lbl2.pack(anchor="w", pady=(0, 4))
+    lbl2 = tk.Label(body, text="Senha", bg=pal["panel"], fg=pal["muted"], font=("Segoe UI", 12, "bold"))
+    lbl2.pack(anchor="w", pady=(0, 6))
 
     # Linha senha: Entry ocupa todo o espaço e o olho fica fixo à direita
     pass_row = tk.Frame(body, bg=pal["panel"])
-    pass_row.pack(fill="x", pady=(0, 10))
+    pass_row.pack(fill="x", pady=(0, 14))
 
     show_var = tk.BooleanVar(value=False)
 
     def _toggle_pass():
         ent_pass.config(show="" if show_var.get() else "*")
 
-    eye_icon = _mk_eye_icon(18, pal["muted"])
+    eye_icon = _mk_eye_icon(24, pal["muted"])
 
     btn_eye = tk.Button(
         pass_row,
@@ -7780,12 +8054,12 @@ def abrir_login():
         activebackground=pal["panel2"],
         fg=pal["muted"],
         cursor="hand2",
-        width=3,   # deixa o botão pequeno e consistente
+        width=4,   # deixa o botão pequeno e consistente
         command=lambda: (show_var.set(not show_var.get()), _toggle_pass()),
     )
     if eye_icon:
         btn_eye.image = eye_icon
-    btn_eye.pack(side="right", padx=(8, 0), ipady=6)
+    btn_eye.pack(side="right", padx=(10, 0), ipady=8)
 
     ent_pass = tk.Entry(
         pass_row,
@@ -7798,21 +8072,21 @@ def abrir_login():
         bg=pal["panel2"],
         fg=pal["text"],
         insertbackground=pal["text"],
-        font=("Segoe UI", 11),
+        font=("Segoe UI", 13),
     )
-    ent_pass.pack(side="left", fill="x", expand=True, ipady=10)
+    ent_pass.pack(side="left", fill="x", expand=True, ipady=14)
 
     # Checkbox lembrar
     remember_var = tk.BooleanVar(value=False)
     chk = tk.Checkbutton(body, text="Lembrar usuário", variable=remember_var,
                          bg=pal["panel"], fg=pal["muted"], activebackground=pal["panel"],
                          activeforeground=pal["text"], selectcolor=pal["panel"],
-                         font=("Segoe UI", 10))
-    chk.pack(anchor="w", pady=(0, 10))
+                         font=("Segoe UI", 12))
+    chk.pack(anchor="w", pady=(0, 14))
 
     # status
-    lbl_msg = tk.Label(body, text="", bg=pal["panel"], fg=pal["danger"], font=("Segoe UI", 9, "bold"))
-    lbl_msg.pack(anchor="w", pady=(0, 10))
+    lbl_msg = tk.Label(body, text="", bg=pal["panel"], fg=pal["danger"], font=("Segoe UI", 11, "bold"))
+    lbl_msg.pack(anchor="w", pady=(0, 14))
 
     # Botão com hover bonito
     btn_bg = pal["accent"]
@@ -7828,9 +8102,9 @@ def abrir_login():
         activebackground=btn_bg_press,
         fg="white",
         cursor="hand2",
-        font=("Segoe UI", 11, "bold"),
-        padx=12,
-        pady=10,
+        font=("Segoe UI", 13, "bold"),
+        padx=16,
+        pady=14,
         command=lambda: _do_login(),
     )
     btn_login.pack(fill="x")
